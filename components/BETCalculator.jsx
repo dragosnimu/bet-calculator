@@ -1,20 +1,21 @@
 "use client";
 
-import { useState, useMemo, useCallback } from "react";
+import { useState, useMemo, useCallback, useEffect } from "react";
 import * as XLSX from "xlsx";
 
-// Defaults from BVB 01.04.2026
+// Valori de referinta (BVB ~30.06.2026). Sunt doar fallback static — la deschidere
+// aplicatia incarca automat preturile reale "Ultimul pret" de pe bvb.ro.
 const DEFAULT_DATA = [
-  { symbol: "TLV", name: "Banca Transilvania S.A.", weight: 20.76, price: 36.10 },
-  { symbol: "SNP", name: "OMV Petrom S.A.", weight: 16.09, price: 0.999 },
-  { symbol: "SNG", name: "S.N.G.N. Romgaz S.A.", weight: 11.84, price: 11.88 },
-  { symbol: "H2O", name: "S.P.E.E.H. Hidroelectrica S.A.", weight: 11.63, price: 150.00 },
-  { symbol: "TGN", name: "S.N.T.G.N. Transgaz S.A.", weight: 7.01, price: 86.40 },
-  { symbol: "BRD", name: "BRD - Groupe Société Générale S.A.", weight: 6.77, price: 28.20 },
-  { symbol: "DIGI", name: "Digi Communications N.V.", weight: 4.79, price: 139.00 },
-  { symbol: "EL", name: "Societatea Energetică Electrica S.A.", weight: 4.34, price: 29.70 },
-  { symbol: "M", name: "MedLife S.A.", weight: 3.85, price: 12.00 },
-  { symbol: "SNN", name: "S.N. Nuclearelectrica S.A.", weight: 3.47, price: 66.80 },
+  { symbol: "TLV", name: "Banca Transilvania S.A.", weight: 18.63, price: 38.28 },
+  { symbol: "SNP", name: "OMV Petrom S.A.", weight: 14.86, price: 1.045 },
+  { symbol: "SNG", name: "S.N.G.N. Romgaz S.A.", weight: 13.28, price: 15.10 },
+  { symbol: "H2O", name: "S.P.E.E.H. Hidroelectrica S.A.", weight: 12.85, price: 187.80 },
+  { symbol: "BRD", name: "BRD - Groupe Société Générale S.A.", weight: 7.26, price: 34.25 },
+  { symbol: "TGN", name: "S.N.T.G.N. Transgaz S.A.", weight: 6.73, price: 94.00 },
+  { symbol: "DIGI", name: "Digi Communications N.V.", weight: 5.32, price: 60.00 },
+  { symbol: "EL", name: "Societatea Energetică Electrica S.A.", weight: 5.21, price: 40.35 },
+  { symbol: "SNN", name: "S.N. Nuclearelectrica S.A.", weight: 3.29, price: 71.70 },
+  { symbol: "M", name: "MedLife S.A.", weight: 3.23, price: 11.40 },
 ];
 
 const COLORS = [
@@ -94,7 +95,7 @@ export default function BETCalculator() {
   const [data, setData] = useState(DEFAULT_DATA);
   const [liveSymbols, setLiveSymbols] = useState(new Set());
   const [loading, setLoading] = useState(false);
-  const [lastUpdate, setLastUpdate] = useState("01.04.2026 (prețuri de referință BVB)");
+  const [lastUpdate, setLastUpdate] = useState("se încarcă prețurile live…");
   const [error, setError] = useState(null);
   const [exported, setExported] = useState(false);
 
@@ -118,10 +119,10 @@ export default function BETCalculator() {
     setLiveSymbols(s => { const n = new Set(s); n.delete(sym); return n; });
   }, []);
 
-  const handleRefresh = useCallback(async () => {
+  const handleRefresh = useCallback(async (silent = false) => {
     setLoading(true); setError(null);
     try {
-      const res = await fetch("/api/prices", { signal: AbortSignal.timeout(20000) });
+      const res = await fetch("/api/prices", { signal: AbortSignal.timeout(25000) });
       const contentType = res.headers.get("content-type") || "";
       if (!contentType.includes("application/json")) {
         throw new Error("Actualizarea live funcționează doar pe serverul deployat (Docker). Aici poți edita prețurile manual — click pe orice preț din tabel.");
@@ -135,8 +136,12 @@ export default function BETCalculator() {
       const now = new Date();
       const liveCount = json.live ?? json.count;
       setLastUpdate(now.toLocaleDateString("ro-RO") + " " + now.toLocaleTimeString("ro-RO", { hour: "2-digit", minute: "2-digit" }) + ` (${liveCount}/${json.count} prețuri live de pe bvb.ro)`);
-    } catch (e) { setError(e.message); } finally { setLoading(false); }
+    } catch (e) { if (!silent) setError(e.message); } finally { setLoading(false); }
   }, []);
+
+  // Incarca automat preturile reale de pe bvb.ro la deschiderea paginii.
+  // In mod "silent" nu afiseaza eroare daca esueaza — raman valorile de referinta.
+  useEffect(() => { handleRefresh(true); }, [handleRefresh]);
 
   const handleExport = useCallback(() => {
     if (investAmount <= 0) { setError("Introdu o sumă de investit."); return; }
@@ -167,7 +172,7 @@ export default function BETCalculator() {
                 <div style={{ fontSize: 10, color: "#475569", fontFamily: mono }}>Actualizat</div>
                 <div style={{ fontSize: 11, color: "#64748b", fontFamily: mono }}>{lastUpdate}</div>
               </div>
-              <button onClick={handleRefresh} disabled={loading} style={{ display: "flex", alignItems: "center", gap: 8, background: loading ? "rgba(37,99,235,0.08)" : "linear-gradient(135deg, rgba(37,99,235,0.15), rgba(124,58,237,0.12))", border: "1px solid rgba(59,130,246,0.25)", borderRadius: 10, padding: "10px 16px", color: loading ? "#94a3b8" : "#60a5fa", fontSize: 12, fontWeight: 600, cursor: loading ? "wait" : "pointer", fontFamily: sans, transition: "all 0.2s" }}>
+              <button onClick={() => handleRefresh(false)} disabled={loading} style={{ display: "flex", alignItems: "center", gap: 8, background: loading ? "rgba(37,99,235,0.08)" : "linear-gradient(135deg, rgba(37,99,235,0.15), rgba(124,58,237,0.12))", border: "1px solid rgba(59,130,246,0.25)", borderRadius: 10, padding: "10px 16px", color: loading ? "#94a3b8" : "#60a5fa", fontSize: 12, fontWeight: 600, cursor: loading ? "wait" : "pointer", fontFamily: sans, transition: "all 0.2s" }}>
                 {loading ? <><Spin /> Actualizez...</> : <><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M21.5 2v6h-6M2.5 22v-6h6" /><path d="M2.5 11.5a10 10 0 0 1 18.14-4.5M21.5 12.5a10 10 0 0 1-18.14 4.5" /></svg>Actualizează</>}
               </button>
               <button onClick={handleExport} style={{ display: "flex", alignItems: "center", gap: 8, background: exported ? "rgba(16,185,129,0.2)" : "linear-gradient(135deg, rgba(16,185,129,0.12), rgba(6,182,212,0.08))", border: `1px solid ${exported ? "rgba(16,185,129,0.4)" : "rgba(16,185,129,0.2)"}`, borderRadius: 10, padding: "10px 16px", color: exported ? "#34d399" : "#10b981", fontSize: 12, fontWeight: 600, cursor: "pointer", fontFamily: sans, transition: "all 0.2s" }}>
