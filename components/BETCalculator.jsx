@@ -3,19 +3,19 @@
 import { useState, useMemo, useCallback, useEffect } from "react";
 import * as XLSX from "xlsx";
 
-// Valori de referinta (BVB ~30.06.2026). Sunt doar fallback static — la deschidere
-// aplicatia incarca automat preturile reale "Ultimul pret" de pe bvb.ro.
+// Valori de referinta (BVB ~01.07.2026, pret de cumparare/Ask). Sunt doar fallback static —
+// la deschidere aplicatia incarca automat preturile de cumparare (Ask) reale de pe bvb.ro.
 const DEFAULT_DATA = [
-  { symbol: "TLV", name: "Banca Transilvania S.A.", weight: 18.63, price: 38.28 },
-  { symbol: "SNP", name: "OMV Petrom S.A.", weight: 14.86, price: 1.045 },
-  { symbol: "SNG", name: "S.N.G.N. Romgaz S.A.", weight: 13.28, price: 15.10 },
-  { symbol: "H2O", name: "S.P.E.E.H. Hidroelectrica S.A.", weight: 12.85, price: 187.80 },
-  { symbol: "BRD", name: "BRD - Groupe Société Générale S.A.", weight: 7.26, price: 34.25 },
-  { symbol: "TGN", name: "S.N.T.G.N. Transgaz S.A.", weight: 6.73, price: 94.00 },
-  { symbol: "DIGI", name: "Digi Communications N.V.", weight: 5.32, price: 60.00 },
-  { symbol: "EL", name: "Societatea Energetică Electrica S.A.", weight: 5.21, price: 40.35 },
-  { symbol: "SNN", name: "S.N. Nuclearelectrica S.A.", weight: 3.29, price: 71.70 },
-  { symbol: "M", name: "MedLife S.A.", weight: 3.23, price: 11.40 },
+  { symbol: "TLV", name: "Banca Transilvania S.A.", weight: 18.63, price: 39.70 },
+  { symbol: "SNP", name: "OMV Petrom S.A.", weight: 14.86, price: 1.075 },
+  { symbol: "SNG", name: "S.N.G.N. Romgaz S.A.", weight: 13.28, price: 15.48 },
+  { symbol: "H2O", name: "S.P.E.E.H. Hidroelectrica S.A.", weight: 12.85, price: 198.80 },
+  { symbol: "BRD", name: "BRD - Groupe Société Générale S.A.", weight: 7.26, price: 36.45 },
+  { symbol: "TGN", name: "S.N.T.G.N. Transgaz S.A.", weight: 6.73, price: 94.90 },
+  { symbol: "DIGI", name: "Digi Communications N.V.", weight: 5.32, price: 61.10 },
+  { symbol: "EL", name: "Societatea Energetică Electrica S.A.", weight: 5.21, price: 41.50 },
+  { symbol: "SNN", name: "S.N. Nuclearelectrica S.A.", weight: 3.29, price: 73.00 },
+  { symbol: "M", name: "MedLife S.A.", weight: 3.23, price: 12.50 },
 ];
 
 const COLORS = [

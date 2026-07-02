@@ -2,9 +2,9 @@
 //
 // Strategie in 2 pasi:
 //  1) Pagina indicelui (IndicesProfiles) -> compozitia + ponderile oficiale (top 10).
-//  2) Pagina de detaliu a fiecarui instrument -> "Ultimul pret" (pretul real tranzactionat).
-//     Coloana "Pret ref." din tabelul indicelui este pretul de referinta, NU pretul curent
-//     din piata, asa ca prețurile reale se iau din "Ultimul pret".
+//  2) Pagina de detaliu a fiecarui instrument -> pretul de CUMPARARE = "Ask" din randul
+//     "Bid / Ask" (pretul la care investitorul cumpara efectiv acum).
+//     Fallback: "Ultimul pret" (ultima tranzactie) -> "Pret ref." (din tabelul indicelui).
 export const dynamic = "force-dynamic";
 
 const UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36";
@@ -20,6 +20,7 @@ async function fetchText(url, timeoutMs = 15000) {
   const res = await fetch(url, {
     headers: { "User-Agent": UA, Accept: "text/html" },
     signal: AbortSignal.timeout(timeoutMs),
+    cache: "no-store", // NU cache-ui — Next.js persistă altfel raspunsurile si servim date vechi
   });
   if (!res.ok) throw new Error(`status ${res.status}`);
   return res.text();
@@ -54,14 +55,27 @@ function parseConstituents(html) {
   return out;
 }
 
-// Extrage "Ultimul pret" (ultimul pret tranzactionat) de pe pagina de detaliu a instrumentului.
-async function fetchLastPrice(symbol) {
+// Extrage pretul de CUMPARARE (Ask) de pe pagina de detaliu a instrumentului.
+// Randul "Bid / Ask" arata ex: "39,6600 / 39,7000" -> Ask = a doua valoare = 39,70.
+// Fallback pe "Ultimul pret" daca nu exista cotatie de vanzare (piata inchisa / fara oferte).
+async function fetchBuyPrice(symbol) {
   try {
     const html = await fetchText(DETAIL_URL(symbol), 12000);
-    const m = html.match(/Ultimul pret\s*<\/td>\s*<td[^>]*>([\s\S]*?)<\/td>/i);
-    if (!m) return null;
-    const v = toNum(stripTags(m[1]));
-    return v > 0 ? v : null;
+
+    const ba = html.match(/Bid \/ Ask\s*<\/td>\s*<td[^>]*>\s*<span[^>]*>([\s\S]*?)<\/span>/i);
+    if (ba) {
+      const parts = stripTags(ba[1]).split("/");
+      const ask = toNum(parts[1]);
+      if (ask > 0) return { price: ask, kind: "ask" };
+    }
+
+    const last = html.match(/Ultimul pret\s*<\/td>\s*<td[^>]*>([\s\S]*?)<\/td>/i);
+    if (last) {
+      const v = toNum(stripTags(last[1]));
+      if (v > 0) return { price: v, kind: "last" };
+    }
+
+    return null;
   } catch {
     return null;
   }
@@ -82,19 +96,20 @@ export async function GET() {
     all.sort((a, b) => b.weight - a.weight);
     const top = all.slice(0, 10);
 
-    // Pretul real ("Ultimul pret") pentru fiecare companie, in paralel.
-    const lastPrices = await Promise.all(top.map((c) => fetchLastPrice(c.symbol)));
+    // Pretul de cumparare (Ask) pentru fiecare companie, in paralel.
+    const buyPrices = await Promise.all(top.map((c) => fetchBuyPrice(c.symbol)));
 
     let liveCount = 0;
     const companies = top.map((c, i) => {
-      const last = lastPrices[i];
-      const live = last != null;
+      const bp = buyPrices[i];
+      const live = bp != null;
       if (live) liveCount++;
       return {
         symbol: c.symbol,
         name: c.name,
         weight: c.weight,
-        price: live ? last : c.refPrice, // fallback pe pretul de referinta daca nu exista tranzactii
+        price: live ? bp.price : c.refPrice, // fallback pe pretul de referinta daca lipseste
+        priceKind: live ? bp.kind : "ref", // "ask" | "last" | "ref"
         live,
       };
     });
