@@ -7,6 +7,8 @@
 //     Fallback: "Ultimul pret" (ultima tranzactie) -> "Pret ref." (din tabelul indicelui).
 export const dynamic = "force-dynamic";
 
+const APP_VERSION = "2.1.0";
+
 const UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36";
 const INDEX_URL = "https://bvb.ro/FinancialInstruments/Indices/IndicesProfiles.aspx?i=BET";
 const DETAIL_URL = (s) =>
@@ -115,11 +117,12 @@ export async function GET() {
     });
 
     return Response.json({
+      version: APP_VERSION,
       companies,
       updated: new Date().toISOString(),
       count: companies.length,
       total: all.length,
-      live: liveCount, // cate preturi sunt "Ultimul pret" real (restul = pret de referinta)
+      live: liveCount, // cate preturi au cotatie de cumparare (Ask/last); restul = pret de referinta
     });
   } catch (e) {
     const msg =

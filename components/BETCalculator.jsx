@@ -18,6 +18,9 @@ const DEFAULT_DATA = [
   { symbol: "M", name: "MedLife S.A.", weight: 3.23, price: 12.50 },
 ];
 
+// Bump la fiecare deploy ca sa confirmam vizual ca ruleaza codul nou.
+const APP_VERSION = "2.1.0";
+
 const COLORS = [
   "#2563eb","#10b981","#f59e0b","#06b6d4","#8b5cf6",
   "#ef4444","#ec4899","#14b8a6","#f97316","#6366f1",
@@ -163,8 +166,11 @@ export default function BETCalculator() {
             <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
               <div style={{ width: 40, height: 40, borderRadius: 10, background: "linear-gradient(135deg, #2563eb, #7c3aed)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 18, fontWeight: 700, color: "#fff", fontFamily: mono, boxShadow: "0 0 20px rgba(37,99,235,0.3)" }}>B</div>
               <div>
-                <h1 style={{ margin: 0, fontSize: 22, fontWeight: 700, letterSpacing: "-0.02em", background: "linear-gradient(90deg, #e2e8f0, #94a3b8)", WebkitBackgroundClip: "text", WebkitTextFillColor: "transparent" }}>Calculator Alocare BET</h1>
-                <p style={{ margin: 0, fontSize: 11, color: "#64748b", fontFamily: mono }}>Top 10 constituenți · bvb.ro · Scraper direct</p>
+                <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                  <h1 style={{ margin: 0, fontSize: 22, fontWeight: 700, letterSpacing: "-0.02em", background: "linear-gradient(90deg, #e2e8f0, #94a3b8)", WebkitBackgroundClip: "text", WebkitTextFillColor: "transparent" }}>Calculator Alocare BET</h1>
+                  <span style={{ fontSize: 10, fontWeight: 700, color: "#34d399", background: "rgba(16,185,129,0.12)", border: "1px solid rgba(16,185,129,0.3)", borderRadius: 6, padding: "2px 7px", fontFamily: mono }}>v{APP_VERSION}</span>
+                </div>
+                <p style={{ margin: 0, fontSize: 11, color: "#64748b", fontFamily: mono }}>Top 10 constituenți · bvb.ro · preț cumpărare (Ask) · v{APP_VERSION}</p>
               </div>
             </div>
             <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
