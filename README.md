@@ -75,14 +75,48 @@ curl -s http://localhost:3000/api/prices
 
 ---
 
+## Alerte Telegram (scădere preț)
+
+Un worker separat (`bet-alert-worker`, pornit automat de docker-compose) verifică prețurile
+**la fiecare 15 minute cât e bursa deschisă** (Luni–Vineri, 10:00–18:00, ora României) și trimite
+o alertă pe Telegram când o acțiune scade cu **≥1% față de închiderea de ieri**. Re-alertează la
+fiecare treaptă suplimentară (−1%, −2%, −3%…), cu resetare automată la începutul fiecărei zile.
+
+**Acknowledge / Reset:** fiecare alertă are un buton *„🔕 Oprește alertele"* (îl apeși direct în
+Telegram) — după care nu mai primești nimic pentru acea acțiune până apeși **Reactivează** din
+aplicație (panoul „🔔 Alerte preț"). Butonul „Resetează tot" reactivează toate acțiunile.
+
+### Configurare (o singură dată)
+
+1. **Creează un bot:** scrie lui [@BotFather](https://t.me/BotFather) pe Telegram → `/newbot` →
+   urmează pașii → primești un **token** (`123456:ABC...`).
+2. **Află chat ID-ul tău:** scrie `/start` botului tău, apoi deschide (înlocuind `<TOKEN>`):
+   `https://api.telegram.org/bot<TOKEN>/getUpdates` → caută `"chat":{"id":<numărul tău>}`.
+3. **Completează `.env`** pe server:
+   ```bash
+   TELEGRAM_BOT_TOKEN=123456:ABC...
+   TELEGRAM_CHAT_ID=<numărul tău>
+   ```
+4. Reconstruiește: `docker compose up -d --build`.
+
+Fără token, aplicația rulează normal, iar worker-ul intră în **mod dry-run** (alertele apar doar
+în logul containerului: `docker compose logs -f bet-alert-worker`).
+
 ## Variabile de mediu
 
-| Variabilă  | Default      | Descriere                      |
-|------------|--------------|--------------------------------|
-| `PORT`     | `3000`       | Portul pe care rulează app-ul  |
-| `NODE_ENV` | `production` | Mediul de execuție             |
+| Variabilă             | Default           | Descriere                                    |
+|-----------------------|-------------------|----------------------------------------------|
+| `PORT`                | `3000`            | Portul pe care rulează app-ul                |
+| `NODE_ENV`            | `production`      | Mediul de execuție                           |
+| `TELEGRAM_BOT_TOKEN`  | —                 | Tokenul botului de la @BotFather (alerte)    |
+| `TELEGRAM_CHAT_ID`    | —                 | Chat ID-ul unde vin alertele                 |
+| `ALERT_INTERVAL_MIN`  | `15`              | La câte minute se verifică prețurile         |
+| `ALERT_DROP_STEP`     | `1`               | Pragul de scădere, în %                      |
+| `ALERT_TZ`            | `Europe/Bucharest`| Fusul orar pentru programul bursei           |
+| `MARKET_OPEN_HOUR`    | `10`              | Ora de deschidere a bursei                   |
+| `MARKET_CLOSE_HOUR`   | `18`              | Ora de închidere a bursei                    |
 
-**Nu este nevoie de nicio cheie API.** Copiază `.env.example` în `.env` dacă vrei să schimbi portul.
+**Pentru calculator nu e nevoie de nicio cheie API.** Doar alertele Telegram cer token + chat ID (vezi mai sus). Copiază `.env.example` în `.env`.
 
 > ⚠️ Serverul de producție trebuie să poată ieși la internet către `bvb.ro` (scraping-ul rulează la fiecare „Actualizează").
 

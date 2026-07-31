@@ -4,5 +4,7 @@ node_modules
 *.md
 .env
 .DS_Store
-scripts/
 docker-compose.yml
+scripts/_*.html
+scripts/test.mjs
+scripts/health-check.mjs

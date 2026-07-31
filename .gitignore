@@ -26,3 +26,6 @@ scripts/_*.html
 *.jpg
 *.png
 !public/**
+
+# Token/secret local
+token*.txt
