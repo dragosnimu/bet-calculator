@@ -1,6 +1,8 @@
 services:
   bet-calculator:
-    build: .
+    build:
+      context: .
+      dockerfile: dockerfile
     container_name: bet-calculator
     restart: unless-stopped
     ports:
@@ -35,7 +37,9 @@ services:
 
   # Worker de alerte: verifica preturile la 15 min (cat e bursa deschisa) si trimite pe Telegram.
   bet-alert-worker:
-    build: .
+    build:
+      context: .
+      dockerfile: dockerfile
     container_name: bet-alert-worker
     restart: unless-stopped
     command: ["node", "scripts/price-alert-worker.mjs"]
