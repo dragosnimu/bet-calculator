@@ -55,6 +55,9 @@ services:
       - MARKET_CLOSE_HOUR=${MARKET_CLOSE_HOUR:-18}
     volumes:
       - alert-data:/data
+    # Worker-ul nu e server web -> dezactivam healthcheck-ul HTTP mostenit din Dockerfile.
+    healthcheck:
+      disable: true
     deploy:
       resources:
         limits:
