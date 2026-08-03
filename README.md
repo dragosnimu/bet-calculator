@@ -82,9 +82,14 @@ Un worker separat (`bet-alert-worker`, pornit automat de docker-compose) verific
 o alertă pe Telegram când o acțiune scade cu **≥1% față de închiderea de ieri**. Re-alertează la
 fiecare treaptă suplimentară (−1%, −2%, −3%…), cu resetare automată la începutul fiecărei zile.
 
-**Acknowledge / Reset:** fiecare alertă are un buton *„🔕 Oprește alertele"* (îl apeși direct în
-Telegram) — după care nu mai primești nimic pentru acea acțiune până apeși **Reactivează** din
-aplicație (panoul „🔔 Alerte preț"). Butonul „Resetează tot" reactivează toate acțiunile.
+**Acknowledge / Reset (totul din Telegram):** fiecare alertă are un buton *„🔕 Oprește alertele"*
+— după care nu mai primești nimic pentru acea acțiune. O reactivezi cu comanda **`/reset SIMBOL`**
+(sau `/reset all` pentru toate). Comanda **`/status`** îți arată oricând starea celor 10 acțiuni
+(variație % + trend + care sunt oprite). Alertele oprite se reactivează oricum automat la începutul
+fiecărei zile de tranzacționare.
+
+> Nota: controlul alertelor se face **exclusiv din Telegram** (privat). Site-ul public afișează
+> doar calculatorul, fără date sau butoane de alerte.
 
 ### Alerte de trend intraday (cu grafic)
 

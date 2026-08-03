@@ -182,12 +182,46 @@ async function pollTelegram() {
     state = loadState();
     for (const u of data.result) {
       state.tgOffset = u.update_id;
+
+      // Buton inline "Oprește alertele"
       const cq = u.callback_query;
       if (cq && typeof cq.data === "string" && cq.data.startsWith("ack:")) {
         const sym = cq.data.slice(4);
         if (state.symbols[sym]) state.symbols[sym].muted = true;
-        await tgAnswer(cq.id, `🔕 ${sym}: alerte oprite. Reactivează din aplicație.`);
+        await tgAnswer(cq.id, `🔕 ${sym}: alerte oprite. Reia cu /reset ${sym}`);
         log(`Ack din Telegram pentru ${sym}`);
+        continue;
+      }
+
+      // Comenzi text: /reset [SIMBOL|all], /status
+      const msg = u.message || u.edited_message;
+      const text = (msg?.text || "").trim();
+      if (!text.startsWith("/")) continue;
+      const [cmdRaw, arg] = text.split(/\s+/);
+      const cmd = cmdRaw.replace(/@.*$/, "").toLowerCase(); // suporta /reset@bot
+
+      if (cmd === "/reset") {
+        const target = (arg || "all").toUpperCase();
+        if (target === "ALL") {
+          for (const s of Object.values(state.symbols)) { s.muted = false; s.lastAlerted = 0; }
+          await tgSend("🔔 Toate alertele au fost reactivate.");
+          log("Reset ALL din Telegram");
+        } else if (state.symbols[target]) {
+          state.symbols[target].muted = false; state.symbols[target].lastAlerted = 0;
+          await tgSend(`🔔 ${target}: alerte reactivate.`);
+          log(`Reset ${target} din Telegram`);
+        } else {
+          await tgSend(`Nu cunosc simbolul „${target}". Folosește /reset SIMBOL sau /reset all.`);
+        }
+      } else if (cmd === "/status") {
+        const rows = Object.entries(state.symbols)
+          .map(([sym, s]) => ({ sym, dropPct: s.dropPct ?? 0, muted: s.muted, trend: s.trend || "none" }))
+          .sort((a, b) => a.dropPct - b.dropPct);
+        const line = (r) => `${r.trend === "up" ? "📈" : r.trend === "down" ? "📉" : "▫️"} <b>${r.sym}</b> ${r.dropPct >= 0 ? "+" : ""}${r.dropPct.toFixed(2)}%${r.muted ? " 🔕" : ""}`;
+        const body = rows.length ? rows.map(line).join("\n") : "Încă nu există date (bursa închisă sau prima verificare în curs).";
+        await tgSend(`📊 <b>Status BET</b> (${isMarketOpen() ? "bursă deschisă" : "bursă închisă"})\n${body}\n\n<i>🔕 = alerte oprite · /reset SIMBOL le reia</i>`);
+      } else if (cmd === "/start" || cmd === "/help") {
+        await tgSend("👋 Bot alerte BET.\nComenzi:\n/status — starea celor 10 acțiuni\n/reset SIMBOL — reia alertele pentru o acțiune\n/reset all — reia toate");
       }
     }
     saveState(state);

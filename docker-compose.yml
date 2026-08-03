@@ -12,12 +12,6 @@ services:
     environment:
       - NODE_ENV=production
       - PORT=3000
-      - ALERT_STATE_FILE=/data/alert-state.json
-      - ALERT_TZ=${ALERT_TZ:-Europe/Bucharest}
-      - MARKET_OPEN_HOUR=${MARKET_OPEN_HOUR:-10}
-      - MARKET_CLOSE_HOUR=${MARKET_CLOSE_HOUR:-18}
-    volumes:
-      - alert-data:/data
     healthcheck:
       test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:3000/"]
       interval: 30s

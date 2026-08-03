@@ -19,7 +19,7 @@ const DEFAULT_DATA = [
 ];
 
 // Bump la fiecare deploy ca sa confirmam vizual ca ruleaza codul nou.
-const APP_VERSION = "2.3.1";
+const APP_VERSION = "2.4.0";
 
 const COLORS = [
   "#2563eb","#10b981","#f59e0b","#06b6d4","#8b5cf6",
@@ -101,7 +101,6 @@ export default function BETCalculator() {
   const [lastUpdate, setLastUpdate] = useState("se încarcă prețurile live…");
   const [error, setError] = useState(null);
   const [exported, setExported] = useState(false);
-  const [alerts, setAlerts] = useState(null);
 
   const companies = useMemo(() => normalize(data), [data]);
   const investAmount = parseFloat(amount) || 0;
@@ -146,32 +145,6 @@ export default function BETCalculator() {
   // Incarca automat preturile reale de pe bvb.ro la deschiderea paginii.
   // In mod "silent" nu afiseaza eroare daca esueaza — raman valorile de referinta.
   useEffect(() => { handleRefresh(true); }, [handleRefresh]);
-
-  // Panou alerte: starea vine de la worker prin /api/alerts (reimprospatat la 60s).
-  const loadAlerts = useCallback(async () => {
-    try {
-      const res = await fetch("/api/alerts", { cache: "no-store" });
-      if (!res.ok) return;
-      const ct = res.headers.get("content-type") || "";
-      if (!ct.includes("application/json")) return;
-      setAlerts(await res.json());
-    } catch { /* silent */ }
-  }, []);
-  useEffect(() => {
-    loadAlerts();
-    const id = setInterval(loadAlerts, 60000);
-    return () => clearInterval(id);
-  }, [loadAlerts]);
-
-  const alertAction = useCallback(async (action, symbol) => {
-    try {
-      await fetch("/api/alerts", {
-        method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action, symbol }),
-      });
-      loadAlerts();
-    } catch { /* silent */ }
-  }, [loadAlerts]);
 
   const handleExport = useCallback(() => {
     if (investAmount <= 0) { setError("Introdu o sumă de investit."); return; }
@@ -239,63 +212,6 @@ export default function BETCalculator() {
             </div>
           )}
         </div>
-
-        {/* Alerte pret */}
-        {alerts && (
-          <div style={{ background: "rgba(15,23,42,0.6)", border: "1px solid rgba(59,130,246,0.12)", borderRadius: 16, padding: "18px 20px", marginBottom: 24 }}>
-            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 10, marginBottom: 12 }}>
-              <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                <span style={{ fontSize: 13, fontWeight: 700, color: "#e2e8f0", fontFamily: mono }}>🔔 Alerte preț</span>
-                <span style={{ fontSize: 10, fontFamily: mono, color: alerts.marketOpen ? "#34d399" : "#64748b", background: alerts.marketOpen ? "rgba(16,185,129,0.12)" : "rgba(100,116,139,0.12)", border: `1px solid ${alerts.marketOpen ? "rgba(16,185,129,0.3)" : "rgba(100,116,139,0.25)"}`, borderRadius: 6, padding: "2px 8px" }}>
-                  {alerts.marketOpen ? "BURSĂ DESCHISĂ" : "BURSĂ ÎNCHISĂ"}
-                </span>
-                <span style={{ fontSize: 10, fontFamily: mono, color: alerts.telegramConfigured ? "#60a5fa" : "#f59e0b" }}>
-                  {alerts.telegramConfigured ? "Telegram ✓" : "Telegram neconfigurat"}
-                </span>
-              </div>
-              <button onClick={() => alertAction("resetAll")} style={{ fontSize: 11, fontFamily: sans, fontWeight: 600, color: "#94a3b8", background: "rgba(30,41,59,0.6)", border: "1px solid rgba(59,130,246,0.15)", borderRadius: 8, padding: "6px 12px", cursor: "pointer" }}>Resetează tot</button>
-            </div>
-            {(!alerts.symbols || alerts.symbols.length === 0) ? (
-              <div style={{ fontSize: 11, color: "#475569", fontFamily: mono, lineHeight: 1.6 }}>
-                Încă nu există date de la worker. Alertele apar aici după prima verificare (la fiecare 15 min cât e bursa deschisă), când o acțiune scade cu ≥1% față de închiderea de ieri.
-              </div>
-            ) : (
-              <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-                {alerts.symbols.map(s => {
-                  const down = s.dropPct != null && s.dropPct < 0;
-                  const alerted = (s.level || 0) >= 1;
-                  return (
-                    <div key={s.symbol} style={{ display: "grid", gridTemplateColumns: "70px 1fr 78px 90px 110px", alignItems: "center", gap: 8, padding: "8px 10px", borderRadius: 8, background: alerted ? "rgba(239,68,68,0.05)" : "rgba(30,41,59,0.3)" }}>
-                      <span style={{ fontSize: 13, fontWeight: 700, color: "#e2e8f0", fontFamily: mono }}>{s.symbol}</span>
-                      <span style={{ fontSize: 12, fontFamily: mono, color: "#94a3b8" }}>
-                        {s.last != null ? fmt(s.last) : "—"} <span style={{ color: "#475569" }}>RON</span>
-                      </span>
-                      {(() => {
-                        const up = s.trend === "up", dn = s.trend === "down";
-                        const tip = s.trendMovePct != null ? `Trend intraday: ${(s.trendMovePct >= 0 ? "+" : "") + s.trendMovePct.toFixed(2)}%` : "Fără trend clar";
-                        return (
-                          <span title={tip} style={{ fontSize: 11, fontFamily: mono, fontWeight: 700, textAlign: "center", color: up ? "#10b981" : dn ? "#ef4444" : "#475569" }}>
-                            {up ? "📈 sus" : dn ? "📉 jos" : "—"}
-                          </span>
-                        );
-                      })()}
-                      <span style={{ fontSize: 13, fontWeight: 700, fontFamily: mono, textAlign: "right", color: s.dropPct == null ? "#475569" : (down ? "#ef4444" : "#10b981") }}>
-                        {s.dropPct == null ? "—" : (s.dropPct >= 0 ? "+" : "") + s.dropPct.toFixed(2) + "%"}
-                      </span>
-                      <div style={{ textAlign: "right" }}>
-                        {s.muted ? (
-                          <button onClick={() => alertAction("reset", s.symbol)} style={{ fontSize: 10, fontFamily: sans, fontWeight: 600, color: "#34d399", background: "rgba(16,185,129,0.1)", border: "1px solid rgba(16,185,129,0.3)", borderRadius: 6, padding: "4px 9px", cursor: "pointer" }} title="Reactivează alertele">🔔 Reactivează</button>
-                        ) : (
-                          <button onClick={() => alertAction("ack", s.symbol)} disabled={!alerted} style={{ fontSize: 10, fontFamily: sans, fontWeight: 600, color: alerted ? "#f59e0b" : "#475569", background: alerted ? "rgba(245,158,11,0.1)" : "transparent", border: `1px solid ${alerted ? "rgba(245,158,11,0.3)" : "rgba(71,85,105,0.2)"}`, borderRadius: 6, padding: "4px 9px", cursor: alerted ? "pointer" : "default" }} title={alerted ? "Oprește alertele pentru această acțiune" : "Nicio alertă activă"}>🔕 Oprește</button>
-                        )}
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            )}
-          </div>
-        )}
 
         {/* Legend */}
         <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginBottom: 20 }}>
