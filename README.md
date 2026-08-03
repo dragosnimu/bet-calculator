@@ -134,6 +134,17 @@ semnalul curent pentru toate cele 10 acțiuni. Praguri reglabile din `.env` (`SI
 > **Semnalele sunt informative — nu constituie recomandare de investiție.** Decizia și execuția
 > rămân ale tale; aplicația nu execută ordine.
 
+### Anunțuri oficiale & fundamentale (Faza 2)
+
+- **Anunțuri emitenți (event-driven):** worker-ul monitorizează feed-ul oficial de **rapoarte
+  curente** al BVB și, când apare un raport nou pentru una din cele 10 acțiuni urmărite (convocări
+  AGA, rezultate financiare, tranzacții ale conducerii etc.), trimite **instant** o alertă pe
+  Telegram cu titlul, data și emitentul. La prima pornire face „seed" (marchează tot ca văzut, fără
+  să trimită backlog-ul). Rulează la fiecare tick, inclusiv în afara orelor de tranzacționare.
+- **Fundamentale de bază (filtru de context):** din pagina fiecărui emitent se extrag **P/E (PER),
+  P/BV, EPS, randament dividend (DIVY) și capitalizare**. Apar în `/status` și în alertele de semnal
+  tehnic, ca context de calitate/valoare. (Se schimbă trimestrial, deci sunt context, nu declanșator.)
+
 ## Variabile de mediu
 
 | Variabilă             | Default           | Descriere                                    |

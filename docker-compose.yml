@@ -56,6 +56,7 @@ services:
       - SIGNAL_STRONG_SELL=${SIGNAL_STRONG_SELL:--55}
       - SIGNAL_MIN_CONFIRMS=${SIGNAL_MIN_CONFIRMS:-3}
       - SIGNAL_COOLDOWN_MIN=${SIGNAL_COOLDOWN_MIN:-45}
+      - ANNOUNCE_ENABLED=${ANNOUNCE_ENABLED:-true}
     volumes:
       - alert-data:/data
     # Worker-ul nu e server web -> dezactivam healthcheck-ul HTTP mostenit din Dockerfile.

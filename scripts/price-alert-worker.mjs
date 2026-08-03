@@ -44,6 +44,9 @@ const TA_CFG = {
 
 const UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36";
 const INDEX_URL = "https://bvb.ro/FinancialInstruments/Indices/IndicesProfiles.aspx?i=BET";
+const REPORTS_URL = "https://bvb.ro/FinancialInstruments/SelectedData/CurrentReports";
+const ANNOUNCE_ENABLED = (process.env.ANNOUNCE_ENABLED ?? "true") !== "false";
+const ANN_SEEN_MAX = 400;
 const DETAIL_URL = (s) =>
   `https://bvb.ro/FinancialInstruments/Details/FinancialInstrumentsDetails.aspx?s=${encodeURIComponent(s)}`;
 
@@ -133,17 +136,20 @@ function parseConstituents(html) {
   }
   return out;
 }
-// Pret curent (Ultimul pret) + pret de referinta (inchiderea de ieri) de pe pagina de detaliu.
+// Pret curent + referinta + indicatori fundamentali, de pe pagina de detaliu.
+function fundField(html, label) {
+  const m = html.match(new RegExp(`<td>${label}</td>\\s*<td[^>]*>([\\s\\S]*?)</td>`, "i"));
+  return m ? toNum(stripTags(m[1])) : null;
+}
 async function fetchQuote(symbol) {
   try {
     const html = await fetchText(DETAIL_URL(symbol), 12000);
     const last = html.match(/Ultimul pret\s*<\/td>\s*<td[^>]*>([\s\S]*?)<\/td>/i);
     const ref = html.match(/Pret referinta\s*<\/td>\s*<td[^>]*>([\s\S]*?)<\/td>/i);
-    const lastV = last ? toNum(stripTags(last[1])) : null;
-    const refV = ref ? toNum(stripTags(ref[1])) : null;
-    return { last: lastV, ref: refV };
+    const fund = { per: fundField(html, "PER"), pbv: fundField(html, "P/BV"), eps: fundField(html, "EPS"), divy: fundField(html, "DIVY"), cap: fundField(html, "Capitalizare") };
+    return { last: last ? toNum(stripTags(last[1])) : null, ref: ref ? toNum(stripTags(ref[1])) : null, fund };
   } catch {
-    return { last: null, ref: null };
+    return { last: null, ref: null, fund: null };
   }
 }
 
@@ -228,10 +234,11 @@ async function pollTelegram() {
       } else if (cmd === "/status") {
         const sigIcon = { STRONG_BUY: "🟢🚀", BUY: "🟢", NEUTRAL: "⚪", REDUCE: "🔴", STRONG_SELL: "🔴⚠️", INSUFICIENT: "…" };
         const rows = Object.entries(state.symbols)
-          .map(([sym, s]) => ({ sym, dropPct: s.dropPct ?? 0, muted: s.muted, trend: s.trend || "none", sig: s.sigStateNow || "INSUFICIENT", score: s.sigScore ?? null }))
+          .map(([sym, s]) => ({ sym, dropPct: s.dropPct ?? 0, muted: s.muted, trend: s.trend || "none", sig: s.sigStateNow || "INSUFICIENT", score: s.sigScore ?? null, per: s.fund?.per ?? null, divy: s.fund?.divy ?? null }))
           .sort((a, b) => (b.score ?? -999) - (a.score ?? -999));
         const line = (r) => `${sigIcon[r.sig] || "⚪"} <b>${r.sym}</b> ${r.score != null ? (r.score >= 0 ? "+" : "") + r.score : "—"}` +
-          ` ${r.trend === "up" ? "📈" : r.trend === "down" ? "📉" : ""} ${r.dropPct >= 0 ? "+" : ""}${r.dropPct.toFixed(2)}%${r.muted ? " 🔕" : ""}`;
+          ` ${r.trend === "up" ? "📈" : r.trend === "down" ? "📉" : ""} ${r.dropPct >= 0 ? "+" : ""}${r.dropPct.toFixed(2)}%${r.muted ? " 🔕" : ""}` +
+          `${r.per != null ? ` · P/E ${r.per}` : ""}${r.divy != null ? ` · div ${r.divy}%` : ""}`;
         const body = rows.length ? rows.map(line).join("\n") : "Încă nu există date (bursa închisă sau prima verificare în curs).";
         await tgSend(`📊 <b>Status BET</b> (${isMarketOpen() ? "bursă deschisă" : "bursă închisă"})\n<i>semnal · scor tehnic · trend · variație zi</i>\n${body}\n\n<i>🟢🚀 cumpărare puternică · 🔴⚠️ vânzare/risc · 🔕 oprit · /reset SIMBOL</i>`);
       } else if (cmd === "/start" || cmd === "/help") {
@@ -271,6 +278,66 @@ function computeTrend(history) {
   let state = "none";
   if (lr.r2 >= TREND_MIN_R2 && Math.abs(lr.movePct) >= TREND_MIN_MOVE) state = lr.movePct > 0 ? "up" : "down";
   return { state, movePct: lr.movePct, r2: lr.r2, n: ys.length, first: ys[0], last: ys[ys.length - 1] };
+}
+
+// ---------- Anunturi oficiale emitenti (rapoarte curente BVB) ----------
+const htmlDecode = (s) => s.replace(/&nbsp;/g, " ").replace(/&#39;/g, "'").replace(/&quot;/g, '"').replace(/&amp;/g, "&").trim();
+
+function parseReports(html) {
+  const rows = [...html.matchAll(/<tr[^>]*>([\s\S]*?)<\/tr>/gi)];
+  const out = [];
+  for (const r of rows) {
+    const row = r[1];
+    const sym = (row.match(/[?&]s=([A-Z0-9]+)"/) || row.match(/<b>\s*([A-Z0-9]+)\s*<\/b>/) || [])[1];
+    const dt = (row.match(/(\d{2}\.\d{2}\.\d{4}\s+\d{1,2}:\d{2})/) || [])[1];
+    const title = htmlDecode((row.match(/value="([^"]+)"/) || row.match(/data-search="([^"]+)"/) || [])[1] || "");
+    if (sym && dt && title) out.push({ sym, dt, title });
+  }
+  return out;
+}
+
+async function checkAnnouncements() {
+  if (!ANNOUNCE_ENABLED) return;
+  let html;
+  try { html = await fetchText(REPORTS_URL, 15000); }
+  catch (e) { log("Reports fetch fail:", e.message); return; }
+
+  const reports = parseReports(html);
+  if (!reports.length) return;
+
+  const state = loadState();
+  const watch = new Set(Object.keys(state.symbols || {}));
+  if (!watch.size) return; // inca nu stim ce actiuni urmarim (inainte de primul checkPrices)
+
+  state.annSeen = state.annSeen || [];
+  const seen = new Set(state.annSeen);
+  const mine = reports.filter((a) => watch.has(a.sym));
+
+  // Prima rulare: marcam tot ca vazut, fara alerta (evitam backlog-ul).
+  if (!state.annSeeded) {
+    for (const a of mine) seen.add(`${a.sym}|${a.dt}|${a.title.slice(0, 40)}`);
+    state.annSeen = [...seen].slice(-ANN_SEEN_MAX);
+    state.annSeeded = true;
+    saveState(state);
+    log(`Anunturi: seed initial (${mine.length} marcate ca vazute).`);
+    return;
+  }
+
+  const fresh = [];
+  for (const a of mine) {
+    const key = `${a.sym}|${a.dt}|${a.title.slice(0, 40)}`;
+    if (!seen.has(key)) { seen.add(key); fresh.push(a); }
+  }
+  state.annSeen = [...seen].slice(-ANN_SEEN_MAX);
+  saveState(state);
+
+  for (const a of fresh) {
+    const nm = state.symbols[a.sym]?.name || a.sym;
+    const text = `📢 <b>${a.sym}</b> — anunț nou BVB\n${nm}\n<i>${a.dt}</i>\n${a.title}`;
+    await tgSend(text);
+    log(`ANUNT ${a.sym} ${a.dt} :: ${a.title.slice(0, 50)}`);
+  }
+  if (fresh.length) log(`Anunturi: ${fresh.length} noi trimise.`);
 }
 
 // ---------- Logica de verificare ----------
@@ -313,6 +380,10 @@ async function checkPrices() {
     const s = (state.symbols[c.symbol] ||= { lastAlerted: 0, muted: false });
     s.name = c.name; s.ref = ref; s.last = last; s.dropPct = dropPct; s.level = level;
 
+    // Fundamentale — pastram ultima valoare valida (BVB serveste ocazional pagini fara ele).
+    const f = quotes[i].fund;
+    if (f) { s.fund = { ...(s.fund || {}), ...Object.fromEntries(Object.entries(f).filter(([, v]) => v != null)) }; }
+
     // Daca si-a revenit sub pragul alertat, re-armam treapta.
     if (level < (s.lastAlerted || 0)) s.lastAlerted = level;
 
@@ -343,7 +414,7 @@ async function checkPrices() {
       const coolOk = !s.lastSigAt || nowMs - s.lastSigAt >= SIGNAL_COOLDOWN_MIN * 60000;
       if (strong && a.state !== (s.sigNotified || "none") && coolOk) {
         s.sigNotified = a.state; s.lastSigAt = nowMs;
-        signalAlerts.push({ symbol: c.symbol, name: c.name, ref, last, ...a, bars: s.bars.slice() });
+        signalAlerts.push({ symbol: c.symbol, name: c.name, ref, last, ...a, bars: s.bars.slice(), fund: s.fund });
       } else if (!strong) {
         s.sigNotified = "none"; // re-armam cand iese din starea puternica
       }
@@ -389,6 +460,9 @@ async function checkPrices() {
       `<b>${a.symbol}</b> · ${a.name}`,
       `Scor tehnic: <b>${a.score >= 0 ? "+" : ""}${a.score}</b>/100 (${a.confirms} confirmări)`,
       `Preț: <b>${fmt(a.last)}</b> RON` + (i.rsi != null ? ` · RSI ${i.rsi.toFixed(0)}` : ""),
+      ...(a.fund && (a.fund.per != null || a.fund.divy != null)
+        ? [`Fundamental: ${a.fund.per != null ? `P/E ${a.fund.per}` : ""}${a.fund.eps != null ? ` · EPS ${a.fund.eps}` : ""}${a.fund.divy != null ? ` · div. ${a.fund.divy}%` : ""}`]
+        : []),
       "",
       "Motive:",
       ...a.reasons.map((r) => `• ${r}`),
@@ -413,6 +487,7 @@ async function checkPrices() {
 
 // ---------- Bucle ----------
 async function priceLoop() {
+  try { await checkAnnouncements(); } catch (e) { log("checkAnnouncements err:", e.message); }
   try { await checkPrices(); } catch (e) { log("checkPrices err:", e.message); }
   setTimeout(priceLoop, INTERVAL_MIN * 60 * 1000);
 }
@@ -430,4 +505,4 @@ if (isMain) {
   telegramLoop();
 }
 
-export { checkPrices, isMarketOpen, todayStr, parseConstituents, loadState, saveState, computeTrend };
+export { checkPrices, checkAnnouncements, parseReports, isMarketOpen, todayStr, parseConstituents, loadState, saveState, computeTrend };
