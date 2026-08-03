@@ -45,6 +45,8 @@ export async function GET() {
       level: s.level ?? 0,
       lastAlerted: s.lastAlerted ?? 0,
       muted: !!s.muted,
+      trend: s.trend ?? "none",           // "up" | "down" | "none"
+      trendMovePct: s.trendMovePct ?? null,
     }))
     .sort((a, b) => (a.dropPct ?? 0) - (b.dropPct ?? 0)); // cele mai scazute primele
 

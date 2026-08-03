@@ -19,7 +19,7 @@ const DEFAULT_DATA = [
 ];
 
 // Bump la fiecare deploy ca sa confirmam vizual ca ruleaza codul nou.
-const APP_VERSION = "2.3.0";
+const APP_VERSION = "2.3.1";
 
 const COLORS = [
   "#2563eb","#10b981","#f59e0b","#06b6d4","#8b5cf6",
@@ -265,11 +265,20 @@ export default function BETCalculator() {
                   const down = s.dropPct != null && s.dropPct < 0;
                   const alerted = (s.level || 0) >= 1;
                   return (
-                    <div key={s.symbol} style={{ display: "grid", gridTemplateColumns: "70px 1fr 90px 110px", alignItems: "center", gap: 8, padding: "8px 10px", borderRadius: 8, background: alerted ? "rgba(239,68,68,0.05)" : "rgba(30,41,59,0.3)" }}>
+                    <div key={s.symbol} style={{ display: "grid", gridTemplateColumns: "70px 1fr 78px 90px 110px", alignItems: "center", gap: 8, padding: "8px 10px", borderRadius: 8, background: alerted ? "rgba(239,68,68,0.05)" : "rgba(30,41,59,0.3)" }}>
                       <span style={{ fontSize: 13, fontWeight: 700, color: "#e2e8f0", fontFamily: mono }}>{s.symbol}</span>
                       <span style={{ fontSize: 12, fontFamily: mono, color: "#94a3b8" }}>
                         {s.last != null ? fmt(s.last) : "—"} <span style={{ color: "#475569" }}>RON</span>
                       </span>
+                      {(() => {
+                        const up = s.trend === "up", dn = s.trend === "down";
+                        const tip = s.trendMovePct != null ? `Trend intraday: ${(s.trendMovePct >= 0 ? "+" : "") + s.trendMovePct.toFixed(2)}%` : "Fără trend clar";
+                        return (
+                          <span title={tip} style={{ fontSize: 11, fontFamily: mono, fontWeight: 700, textAlign: "center", color: up ? "#10b981" : dn ? "#ef4444" : "#475569" }}>
+                            {up ? "📈 sus" : dn ? "📉 jos" : "—"}
+                          </span>
+                        );
+                      })()}
                       <span style={{ fontSize: 13, fontWeight: 700, fontFamily: mono, textAlign: "right", color: s.dropPct == null ? "#475569" : (down ? "#ef4444" : "#10b981") }}>
                         {s.dropPct == null ? "—" : (s.dropPct >= 0 ? "+" : "") + s.dropPct.toFixed(2) + "%"}
                       </span>
