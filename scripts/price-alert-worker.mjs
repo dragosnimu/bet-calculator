@@ -13,6 +13,7 @@ import { readFileSync, writeFileSync, renameSync, mkdirSync, existsSync } from "
 import { dirname } from "path";
 import { renderLineChartPNG } from "./png-chart.mjs";
 import { analyze } from "./ta.mjs";
+import { fetchNews, scoreSentiment, NAME_QUERY } from "./news.mjs";
 
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || "";
 const CHAT_ID = process.env.TELEGRAM_CHAT_ID || "";
@@ -47,6 +48,15 @@ const INDEX_URL = "https://bvb.ro/FinancialInstruments/Indices/IndicesProfiles.a
 const REPORTS_URL = "https://bvb.ro/FinancialInstruments/SelectedData/CurrentReports";
 const ANNOUNCE_ENABLED = (process.env.ANNOUNCE_ENABLED ?? "true") !== "false";
 const ANN_SEEN_MAX = 400;
+
+// Sentiment stiri (Faza 3) — Google News RSS + scorare cu Claude
+const SENTIMENT_ENABLED = (process.env.SENTIMENT_ENABLED ?? "true") !== "false";
+const HAS_LLM = !!process.env.ANTHROPIC_API_KEY;
+const SENTIMENT_MIN_ABS = Number(process.env.SENTIMENT_MIN_ABS || 0.5); // prag |score| pt. alerta
+const NEWS_LOOKBACK_DAYS = Number(process.env.NEWS_LOOKBACK_DAYS || 3);
+const NEWS_EVERY_TICKS = Number(process.env.NEWS_EVERY_TICKS || 4);      // ~o data pe ora la 15 min
+const NEWS_SEEN_MAX = 500;
+let newsTick = 0;
 const DETAIL_URL = (s) =>
   `https://bvb.ro/FinancialInstruments/Details/FinancialInstrumentsDetails.aspx?s=${encodeURIComponent(s)}`;
 
@@ -233,12 +243,13 @@ async function pollTelegram() {
         }
       } else if (cmd === "/status") {
         const sigIcon = { STRONG_BUY: "🟢🚀", BUY: "🟢", NEUTRAL: "⚪", REDUCE: "🔴", STRONG_SELL: "🔴⚠️", INSUFICIENT: "…" };
+        const sIcon = (se) => !se ? "" : se.score > 0.15 ? " 📰🟢" : se.score < -0.15 ? " 📰🔴" : " 📰⚪";
         const rows = Object.entries(state.symbols)
-          .map(([sym, s]) => ({ sym, dropPct: s.dropPct ?? 0, muted: s.muted, trend: s.trend || "none", sig: s.sigStateNow || "INSUFICIENT", score: s.sigScore ?? null, per: s.fund?.per ?? null, divy: s.fund?.divy ?? null }))
+          .map(([sym, s]) => ({ sym, dropPct: s.dropPct ?? 0, muted: s.muted, trend: s.trend || "none", sig: s.sigStateNow || "INSUFICIENT", score: s.sigScore ?? null, per: s.fund?.per ?? null, divy: s.fund?.divy ?? null, senti: s.sentiment ?? null }))
           .sort((a, b) => (b.score ?? -999) - (a.score ?? -999));
         const line = (r) => `${sigIcon[r.sig] || "⚪"} <b>${r.sym}</b> ${r.score != null ? (r.score >= 0 ? "+" : "") + r.score : "—"}` +
           ` ${r.trend === "up" ? "📈" : r.trend === "down" ? "📉" : ""} ${r.dropPct >= 0 ? "+" : ""}${r.dropPct.toFixed(2)}%${r.muted ? " 🔕" : ""}` +
-          `${r.per != null ? ` · P/E ${r.per}` : ""}${r.divy != null ? ` · div ${r.divy}%` : ""}`;
+          `${r.per != null ? ` · P/E ${r.per}` : ""}${r.divy != null ? ` · div ${r.divy}%` : ""}${sIcon(r.senti)}`;
         const body = rows.length ? rows.map(line).join("\n") : "Încă nu există date (bursa închisă sau prima verificare în curs).";
         await tgSend(`📊 <b>Status BET</b> (${isMarketOpen() ? "bursă deschisă" : "bursă închisă"})\n<i>semnal · scor tehnic · trend · variație zi</i>\n${body}\n\n<i>🟢🚀 cumpărare puternică · 🔴⚠️ vânzare/risc · 🔕 oprit · /reset SIMBOL</i>`);
       } else if (cmd === "/start" || cmd === "/help") {
@@ -340,6 +351,59 @@ async function checkAnnouncements() {
   if (fresh.length) log(`Anunturi: ${fresh.length} noi trimise.`);
 }
 
+// ---------- Sentiment stiri (Faza 3) ----------
+async function checkNews() {
+  if (!SENTIMENT_ENABLED) return;
+  if (!HAS_LLM) { if (newsTick === 0) log("Sentiment: NECONFIGURAT (lipsa ANTHROPIC_API_KEY) — sar peste."); return; }
+  if (newsTick++ % NEWS_EVERY_TICKS !== 0) return; // rulam ~o data pe ora
+
+  const snap = loadState();
+  const symbols = Object.keys(snap.symbols || {});
+  if (!symbols.length) return;
+  const wasSeeded = !!snap.newsSeeded;
+  const seen = new Set(snap.newsSeen || []);
+  const newLinks = [];
+  const sentUpdates = {}; // sym -> {score,label,summary,ts,count}
+
+  for (const sym of symbols) {
+    const name = NAME_QUERY[sym] || snap.symbols[sym]?.name || sym;
+    let items;
+    try { items = await fetchNews(name, { lookbackDays: NEWS_LOOKBACK_DAYS }); }
+    catch (e) { log(`Stiri ${sym} fetch fail:`, e.message); continue; }
+
+    const fresh = items.filter((it) => !seen.has(it.link));
+    if (!fresh.length) continue;
+    fresh.forEach((it) => { seen.add(it.link); newLinks.push(it.link); });
+
+    // Prima rulare: doar marcam ca vazute, fara scorare (evitam backlog + cost LLM).
+    if (!wasSeeded) continue;
+
+    const senti = await scoreSentiment(sym, name, fresh.map((f) => f.title), { model: process.env.SENTIMENT_MODEL });
+    if (!senti) continue;
+    sentUpdates[sym] = { ...senti, ts: fresh[0].ts, count: fresh.length };
+    log(`SENTIMENT ${sym} ${senti.label} ${senti.score.toFixed(2)} (${fresh.length} titluri)`);
+
+    if (Math.abs(senti.score) >= SENTIMENT_MIN_ABS) {
+      const emo = senti.score > 0 ? "🟢📰" : "🔴📰";
+      const text =
+        `${emo} <b>${sym}</b> — sentiment ${senti.label.toUpperCase()} din știri\n` +
+        `${name}\n` +
+        `Scor sentiment: <b>${senti.score >= 0 ? "+" : ""}${senti.score.toFixed(2)}</b>\n` +
+        `${senti.summary}\n\n` +
+        fresh.slice(0, 3).map((f) => `• <a href="${f.link}">${f.title.slice(0, 90)}</a>`).join("\n") +
+        `\n\n<i>Analiză de sentiment informativă — nu constituie recomandare.</i>`;
+      await tgSend(text);
+    }
+  }
+
+  // Reincarca si imbina doar campurile proprii (pollTelegram poate fi scris intre timp).
+  const state = loadState();
+  state.newsSeen = [...new Set([...(state.newsSeen || []), ...newLinks])].slice(-NEWS_SEEN_MAX);
+  for (const [sym, se] of Object.entries(sentUpdates)) if (state.symbols[sym]) state.symbols[sym].sentiment = se;
+  if (!wasSeeded) { state.newsSeeded = true; log(`Stiri: seed initial (${seen.size} marcate ca vazute).`); }
+  saveState(state);
+}
+
 // ---------- Logica de verificare ----------
 async function checkPrices() {
   if (!isMarketOpen()) { log("Bursa inchisa — skip."); return; }
@@ -414,7 +478,7 @@ async function checkPrices() {
       const coolOk = !s.lastSigAt || nowMs - s.lastSigAt >= SIGNAL_COOLDOWN_MIN * 60000;
       if (strong && a.state !== (s.sigNotified || "none") && coolOk) {
         s.sigNotified = a.state; s.lastSigAt = nowMs;
-        signalAlerts.push({ symbol: c.symbol, name: c.name, ref, last, ...a, bars: s.bars.slice(), fund: s.fund });
+        signalAlerts.push({ symbol: c.symbol, name: c.name, ref, last, ...a, bars: s.bars.slice(), fund: s.fund, sentiment: s.sentiment });
       } else if (!strong) {
         s.sigNotified = "none"; // re-armam cand iese din starea puternica
       }
@@ -463,6 +527,9 @@ async function checkPrices() {
       ...(a.fund && (a.fund.per != null || a.fund.divy != null)
         ? [`Fundamental: ${a.fund.per != null ? `P/E ${a.fund.per}` : ""}${a.fund.eps != null ? ` · EPS ${a.fund.eps}` : ""}${a.fund.divy != null ? ` · div. ${a.fund.divy}%` : ""}`]
         : []),
+      ...(a.sentiment
+        ? [`Sentiment știri: ${a.sentiment.score > 0.15 ? "🟢" : a.sentiment.score < -0.15 ? "🔴" : "⚪"} ${a.sentiment.label} (${a.sentiment.score >= 0 ? "+" : ""}${a.sentiment.score.toFixed(2)})`]
+        : []),
       "",
       "Motive:",
       ...a.reasons.map((r) => `• ${r}`),
@@ -488,6 +555,7 @@ async function checkPrices() {
 // ---------- Bucle ----------
 async function priceLoop() {
   try { await checkAnnouncements(); } catch (e) { log("checkAnnouncements err:", e.message); }
+  try { await checkNews(); } catch (e) { log("checkNews err:", e.message); }
   try { await checkPrices(); } catch (e) { log("checkPrices err:", e.message); }
   setTimeout(priceLoop, INTERVAL_MIN * 60 * 1000);
 }
@@ -505,4 +573,4 @@ if (isMain) {
   telegramLoop();
 }
 
-export { checkPrices, checkAnnouncements, parseReports, isMarketOpen, todayStr, parseConstituents, loadState, saveState, computeTrend };
+export { checkPrices, checkAnnouncements, checkNews, parseReports, isMarketOpen, todayStr, parseConstituents, loadState, saveState, computeTrend };

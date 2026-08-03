@@ -57,6 +57,12 @@ services:
       - SIGNAL_MIN_CONFIRMS=${SIGNAL_MIN_CONFIRMS:-3}
       - SIGNAL_COOLDOWN_MIN=${SIGNAL_COOLDOWN_MIN:-45}
       - ANNOUNCE_ENABLED=${ANNOUNCE_ENABLED:-true}
+      - SENTIMENT_ENABLED=${SENTIMENT_ENABLED:-true}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+      - SENTIMENT_MODEL=${SENTIMENT_MODEL:-claude-opus-5}
+      - SENTIMENT_MIN_ABS=${SENTIMENT_MIN_ABS:-0.5}
+      - NEWS_LOOKBACK_DAYS=${NEWS_LOOKBACK_DAYS:-3}
+      - NEWS_EVERY_TICKS=${NEWS_EVERY_TICKS:-4}
     volumes:
       - alert-data:/data
     # Worker-ul nu e server web -> dezactivam healthcheck-ul HTTP mostenit din Dockerfile.

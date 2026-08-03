@@ -145,6 +145,20 @@ semnalul curent pentru toate cele 10 acțiuni. Praguri reglabile din `.env` (`SI
   P/BV, EPS, randament dividend (DIVY) și capitalizare**. Apar în `/status` și în alertele de semnal
   tehnic, ca context de calitate/valoare. (Se schimbă trimestrial, deci sunt context, nu declanșator.)
 
+### Sentiment din știri (Faza 3)
+
+Worker-ul caută periodic (implicit ~o dată pe oră) **știri financiare românești** despre fiecare
+acțiune prin **Google News RSS** și le scorează sentimentul cu **Claude API** (un scor de la −1 la
++1). Când apar știri noi cu sentiment puternic (implicit |scor| ≥ 0.5) primești pe Telegram o alertă
+cu rezumatul și linkurile. Sentimentul curent apare și în `/status` (📰🟢/📰🔴) și ca **context** în
+alertele de semnal tehnic.
+
+- Necesită **`ANTHROPIC_API_KEY`** în `.env` — fără ea, sentimentul e dezactivat curat (restul merge).
+- Modelul e configurabil (`SENTIMENT_MODEL`). Referința Anthropic recomandă `claude-opus-5`; pentru
+  cost redus la această sarcină simplă poți folosi **`claude-haiku-4-5`**.
+- Doar știrile **noi** sunt scorate (dedup + seed la prima pornire), deci costul rămâne mic.
+- **Analiza de sentiment e informativă — nu constituie recomandare de investiție.**
+
 ## Variabile de mediu
 
 | Variabilă             | Default           | Descriere                                    |
