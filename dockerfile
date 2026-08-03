@@ -18,8 +18,8 @@ ENV NODE_ENV=production NEXT_TELEMETRY_DISABLED=1 PORT=3000 HOSTNAME="0.0.0.0"
 COPY --from=builder /app/public ./public
 COPY --from=builder --chown=nextjs:nodejs /app/.next/standalone ./
 COPY --from=builder --chown=nextjs:nodejs /app/.next/static ./.next/static
-# Scriptul worker de alerte (rulat de serviciul separat din docker-compose)
-COPY --from=builder --chown=nextjs:nodejs /app/scripts/price-alert-worker.mjs ./scripts/price-alert-worker.mjs
+# Scripturile worker-ului de alerte (rulate de serviciul separat din docker-compose)
+COPY --from=builder --chown=nextjs:nodejs /app/scripts ./scripts
 # Directorul de stare partajat (volum montat in ambele servicii)
 RUN mkdir -p /data && chown nextjs:nodejs /data
 USER nextjs

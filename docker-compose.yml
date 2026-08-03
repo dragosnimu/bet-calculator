@@ -53,6 +53,10 @@ services:
       - ALERT_TZ=${ALERT_TZ:-Europe/Bucharest}
       - MARKET_OPEN_HOUR=${MARKET_OPEN_HOUR:-10}
       - MARKET_CLOSE_HOUR=${MARKET_CLOSE_HOUR:-18}
+      - TREND_ENABLED=${TREND_ENABLED:-true}
+      - TREND_WINDOW=${TREND_WINDOW:-8}
+      - TREND_MIN_MOVE=${TREND_MIN_MOVE:-1.0}
+      - TREND_MIN_R2=${TREND_MIN_R2:-0.6}
     volumes:
       - alert-data:/data
     # Worker-ul nu e server web -> dezactivam healthcheck-ul HTTP mostenit din Dockerfile.

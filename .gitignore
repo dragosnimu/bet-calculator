@@ -29,3 +29,4 @@ scripts/_*.html
 
 # Token/secret local
 token*.txt
+telegram*.txt

@@ -86,6 +86,17 @@ fiecare treaptă suplimentară (−1%, −2%, −3%…), cu resetare automată l
 Telegram) — după care nu mai primești nimic pentru acea acțiune până apeși **Reactivează** din
 aplicație (panoul „🔔 Alerte preț"). Butonul „Resetează tot" reactivează toate acțiunile.
 
+### Alerte de trend intraday (cu grafic)
+
+Pe lângă pragurile de scădere, worker-ul detectează și **trendul intraday** al fiecărei acțiuni.
+Pe eșantioanele zilei (la 15 min) rulează o regresie liniară pe o fereastră glisantă (~2h) și
+consideră trendul **clar ascendent** / **clar descendent** când mișcarea pe fereastră e ≥1%
+**și** e suficient de „curată" (R² ≥ 0.6, adică nu zgomot). Când trendul devine clar — sau își
+schimbă direcția — primești pe Telegram un mesaj **+ un grafic** (PNG generat local, fără servicii
+externe) cu evoluția prețului din ziua curentă. Se trimite doar la **schimbarea de stare**, deci
+fără spam. Parametrii se reglează din `.env` (`TREND_WINDOW`, `TREND_MIN_MOVE`, `TREND_MIN_R2`,
+`TREND_ENABLED`).
+
 ### Configurare (o singură dată)
 
 1. **Creează un bot:** scrie lui [@BotFather](https://t.me/BotFather) pe Telegram → `/newbot` →

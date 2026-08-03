@@ -11,6 +11,7 @@
 
 import { readFileSync, writeFileSync, renameSync, mkdirSync, existsSync } from "fs";
 import { dirname } from "path";
+import { renderLineChartPNG } from "./png-chart.mjs";
 
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || "";
 const CHAT_ID = process.env.TELEGRAM_CHAT_ID || "";
@@ -20,6 +21,14 @@ const DROP_STEP = Number(process.env.ALERT_DROP_STEP || 1); // procente
 const TZ = process.env.ALERT_TZ || "Europe/Bucharest";
 const OPEN_H = Number(process.env.MARKET_OPEN_HOUR || 10);
 const CLOSE_H = Number(process.env.MARKET_CLOSE_HOUR || 18);
+
+// Detectie trend (per actiune, intraday)
+const TREND_ENABLED = (process.env.TREND_ENABLED ?? "true") !== "false";
+const TREND_WINDOW = Number(process.env.TREND_WINDOW || 8);       // cate esantioane in fereastra (8 = ~2h)
+const TREND_MIN_SAMPLES = Number(process.env.TREND_MIN_SAMPLES || 4); // minim de puncte ca sa evaluam
+const TREND_MIN_MOVE = Number(process.env.TREND_MIN_MOVE || 1.0); // mutare minima pe fereastra, %
+const TREND_MIN_R2 = Number(process.env.TREND_MIN_R2 || 0.6);    // cat de "curat" trebuie sa fie (0..1)
+const HIST_MAX = 48;                                              // esantioane pastrate/actiune (o zi)
 
 const UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36";
 const INDEX_URL = "https://bvb.ro/FinancialInstruments/Indices/IndicesProfiles.aspx?i=BET";
@@ -138,6 +147,18 @@ async function tgSend(text, replyMarkup) {
     if (!r.ok) log("Telegram sendMessage err", r.status, await r.text());
   } catch (e) { log("Telegram send fail:", e.message); }
 }
+async function tgPhoto(png, caption) {
+  if (!BOT_TOKEN || !CHAT_ID) { log("[DRY-RUN] Foto:", caption.replace(/\n/g, " | ")); return; }
+  try {
+    const form = new FormData();
+    form.append("chat_id", CHAT_ID);
+    form.append("caption", caption);
+    form.append("parse_mode", "HTML");
+    form.append("photo", new Blob([png], { type: "image/png" }), "trend.png");
+    const r = await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendPhoto`, { method: "POST", body: form });
+    if (!r.ok) log("Telegram sendPhoto err", r.status, await r.text());
+  } catch (e) { log("Telegram sendPhoto fail:", e.message); }
+}
 async function tgAnswer(callbackId, text) {
   if (!BOT_TOKEN) return;
   try {
@@ -175,6 +196,35 @@ async function pollTelegram() {
   }
 }
 
+// ---------- Trend (regresie liniara pe fereastra intraday) ----------
+function linreg(ys) {
+  const n = ys.length;
+  let sx = 0, sy = 0, sxx = 0, sxy = 0;
+  for (let i = 0; i < n; i++) { sx += i; sy += ys[i]; sxx += i * i; sxy += i * ys[i]; }
+  const denom = n * sxx - sx * sx;
+  if (denom === 0) return null;
+  const slope = (n * sxy - sx * sy) / denom;
+  const intercept = (sy - slope * sx) / n;
+  const mean = sy / n;
+  let ssRes = 0, ssTot = 0;
+  for (let i = 0; i < n; i++) { const f = intercept + slope * i; ssRes += (ys[i] - f) ** 2; ssTot += (ys[i] - mean) ** 2; }
+  const r2 = ssTot === 0 ? 0 : 1 - ssRes / ssTot;
+  const predStart = intercept, predEnd = intercept + slope * (n - 1);
+  const movePct = predStart !== 0 ? ((predEnd - predStart) / predStart) * 100 : 0;
+  return { slope, r2, movePct };
+}
+// Returneaza {state: "up"|"down"|"none", movePct, r2, n, first, last}
+function computeTrend(history) {
+  const win = history.slice(-TREND_WINDOW);
+  const ys = win.map((h) => h.p);
+  if (ys.length < TREND_MIN_SAMPLES) return { state: "none", n: ys.length };
+  const lr = linreg(ys);
+  if (!lr) return { state: "none", n: ys.length };
+  let state = "none";
+  if (lr.r2 >= TREND_MIN_R2 && Math.abs(lr.movePct) >= TREND_MIN_MOVE) state = lr.movePct > 0 ? "up" : "down";
+  return { state, movePct: lr.movePct, r2: lr.r2, n: ys.length, first: ys[0], last: ys[ys.length - 1] };
+}
+
 // ---------- Logica de verificare ----------
 async function checkPrices() {
   if (!isMarketOpen()) { log("Bursa inchisa — skip."); return; }
@@ -193,12 +243,16 @@ async function checkPrices() {
   let state = loadState();
   const today = todayStr();
   if (state.day !== today) {
-    log(`Zi noua de tranzactionare (${today}) — resetez alertele.`);
+    log(`Zi noua de tranzactionare (${today}) — resetez alertele si istoricul.`);
     state.day = today;
-    for (const s of Object.values(state.symbols)) { s.lastAlerted = 0; s.muted = false; }
+    for (const s of Object.values(state.symbols)) {
+      s.lastAlerted = 0; s.muted = false; s.history = []; s.trendNotified = "none";
+    }
   }
 
   const alerts = [];
+  const trendAlerts = [];
+  const nowISO = new Date().toISOString();
   top.forEach((c, i) => {
     const { last, ref } = quotes[i];
     if (last == null || ref == null || ref <= 0) return;
@@ -216,6 +270,18 @@ async function checkPrices() {
       s.lastAlerted = level;
       alerts.push({ symbol: c.symbol, name: c.name, last, ref, dropPct, level });
     }
+
+    // ---- Trend intraday ----
+    s.history = (s.history || []).concat({ t: nowISO, p: last });
+    if (s.history.length > HIST_MAX) s.history = s.history.slice(-HIST_MAX);
+    const tr = computeTrend(s.history);
+    s.trend = tr.state; s.trendMovePct = tr.movePct ?? null;
+    if (TREND_ENABLED && (tr.state === "up" || tr.state === "down") && tr.state !== (s.trendNotified || "none")) {
+      s.trendNotified = tr.state;
+      trendAlerts.push({ symbol: c.symbol, name: c.name, ref, ...tr, history: s.history.map((h) => h.p) });
+    } else if (tr.state === "none") {
+      // pastram ultima directie clara ca sa nu re-alertam la fiecare oscilatie scurta
+    }
   });
 
   saveState(state);
@@ -230,7 +296,25 @@ async function checkPrices() {
     await tgSend(text, markup);
     log(`ALERTA ${a.symbol} nivel -${a.level * DROP_STEP}% (${a.dropPct.toFixed(2)}%)`);
   }
-  if (!alerts.length) log(`Verificat ${top.length} actiuni — nicio alerta noua.`);
+
+  for (const t of trendAlerts) {
+    const up = t.state === "up";
+    const arrow = up ? "📈" : "📉";
+    const word = up ? "ASCENDENT" : "DESCENDENT";
+    const ore = (t.n * INTERVAL_MIN / 60).toFixed(1);
+    const caption =
+      `${arrow} <b>${t.symbol}</b> — trend clar ${word} (intraday)\n` +
+      `${t.name}\n` +
+      `${t.movePct >= 0 ? "+" : ""}${t.movePct.toFixed(2)}% pe ultimele ~${ore}h (${t.n} puncte, R²=${t.r2.toFixed(2)})\n` +
+      `Preț: ${fmt(t.first)} → <b>${fmt(t.last)}</b> RON (referință ${fmt(t.ref)})`;
+    try {
+      const png = renderLineChartPNG({ points: t.history, up, refPrice: t.ref });
+      await tgPhoto(png, caption);
+    } catch (e) { log("chart/photo fail:", e.message); await tgSend(caption); }
+    log(`TREND ${t.symbol} ${t.state} ${t.movePct.toFixed(2)}% R2=${t.r2.toFixed(2)}`);
+  }
+
+  if (!alerts.length && !trendAlerts.length) log(`Verificat ${top.length} actiuni — nicio alerta noua.`);
 }
 
 // ---------- Bucle ----------
@@ -252,4 +336,4 @@ if (isMain) {
   telegramLoop();
 }
 
-export { checkPrices, isMarketOpen, todayStr, parseConstituents, loadState, saveState };
+export { checkPrices, isMarketOpen, todayStr, parseConstituents, loadState, saveState, computeTrend };

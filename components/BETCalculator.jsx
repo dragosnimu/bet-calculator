@@ -19,7 +19,7 @@ const DEFAULT_DATA = [
 ];
 
 // Bump la fiecare deploy ca sa confirmam vizual ca ruleaza codul nou.
-const APP_VERSION = "2.2.0";
+const APP_VERSION = "2.3.0";
 
 const COLORS = [
   "#2563eb","#10b981","#f59e0b","#06b6d4","#8b5cf6",
