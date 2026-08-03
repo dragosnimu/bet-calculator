@@ -118,6 +118,22 @@ fără spam. Parametrii se reglează din `.env` (`TREND_WINDOW`, `TREND_MIN_MOVE
 Fără token, aplicația rulează normal, iar worker-ul intră în **mod dry-run** (alertele apar doar
 în logul containerului: `docker compose logs -f bet-alert-worker`).
 
+### Semnale tehnice (Faza 1)
+
+Worker-ul acumulează prețurile ca **bare de 15 min** (buffer multi-zi) și rulează o baterie de
+indicatori de analiză tehnică: **EMA 9/21/50, RSI(14), MACD(12,26,9), Bollinger(20,2), breakout pe
+20 de bare, momentum (ROC)** și trendul din regresie. Le combină într-un **scor** de la −100 la +100.
+
+Când scorul devine puternic și confirmat (implicit ≥ +55 cu ≥3 confirmări → **SEMNAL PUTERNIC DE
+CUMPĂRARE**, sau ≤ −55 → **SEMNAL PUTERNIC DE VÂNZARE / RISC**) primești pe Telegram un mesaj cu
+**motivele** (ce indicatori s-au aliniat) și un **grafic adnotat** (preț + liniile EMA). Există un
+cooldown per acțiune (implicit 45 min) ca să nu spameze. Comanda **`/status`** arată scorul tehnic +
+semnalul curent pentru toate cele 10 acțiuni. Praguri reglabile din `.env` (`SIGNAL_*`).
+
+> Se „încălzește" în ~1–2 zile de tranzacționare (are nevoie de destule bare pentru EMA50/MACD).
+> **Semnalele sunt informative — nu constituie recomandare de investiție.** Decizia și execuția
+> rămân ale tale; aplicația nu execută ordine.
+
 ## Variabile de mediu
 
 | Variabilă             | Default           | Descriere                                    |
@@ -131,6 +147,10 @@ Fără token, aplicația rulează normal, iar worker-ul intră în **mod dry-run
 | `ALERT_TZ`            | `Europe/Bucharest`| Fusul orar pentru programul bursei           |
 | `MARKET_OPEN_HOUR`    | `10`              | Ora de deschidere a bursei                   |
 | `MARKET_CLOSE_HOUR`   | `18`              | Ora de închidere a bursei                    |
+| `SIGNAL_ENABLED`      | `true`            | Activează semnalele tehnice                  |
+| `SIGNAL_STRONG_BUY`   | `55`              | Prag scor pentru semnal puternic de cumpărare|
+| `SIGNAL_STRONG_SELL`  | `-55`             | Prag scor pentru semnal puternic de vânzare  |
+| `SIGNAL_COOLDOWN_MIN` | `45`              | Minute între semnale pentru aceeași acțiune  |
 
 **Pentru calculator nu e nevoie de nicio cheie API.** Doar alertele Telegram cer token + chat ID (vezi mai sus). Copiază `.env.example` în `.env`.
 

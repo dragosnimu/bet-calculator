@@ -7,7 +7,7 @@
 //     Fallback: "Ultimul pret" (ultima tranzactie) -> "Pret ref." (din tabelul indicelui).
 export const dynamic = "force-dynamic";
 
-const APP_VERSION = "2.4.0";
+const APP_VERSION = "2.5.0";
 
 const UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36";
 const INDEX_URL = "https://bvb.ro/FinancialInstruments/Indices/IndicesProfiles.aspx?i=BET";

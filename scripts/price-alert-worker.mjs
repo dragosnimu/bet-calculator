@@ -12,6 +12,7 @@
 import { readFileSync, writeFileSync, renameSync, mkdirSync, existsSync } from "fs";
 import { dirname } from "path";
 import { renderLineChartPNG } from "./png-chart.mjs";
+import { analyze } from "./ta.mjs";
 
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || "";
 const CHAT_ID = process.env.TELEGRAM_CHAT_ID || "";
@@ -28,7 +29,18 @@ const TREND_WINDOW = Number(process.env.TREND_WINDOW || 8);       // cate esanti
 const TREND_MIN_SAMPLES = Number(process.env.TREND_MIN_SAMPLES || 4); // minim de puncte ca sa evaluam
 const TREND_MIN_MOVE = Number(process.env.TREND_MIN_MOVE || 1.0); // mutare minima pe fereastra, %
 const TREND_MIN_R2 = Number(process.env.TREND_MIN_R2 || 0.6);    // cat de "curat" trebuie sa fie (0..1)
-const HIST_MAX = 48;                                              // esantioane pastrate/actiune (o zi)
+const HIST_MAX = 48;                                              // esantioane intraday/actiune (o zi)
+
+// Semnale tehnice (Faza 1) — bare de 15 min, buffer multi-zi
+const SIGNAL_ENABLED = (process.env.SIGNAL_ENABLED ?? "true") !== "false";
+const BARS_MAX = Number(process.env.SIGNAL_BARS_MAX || 300);      // ~9 zile de bare 15 min
+const SIGNAL_COOLDOWN_MIN = Number(process.env.SIGNAL_COOLDOWN_MIN || 45); // anti-spam per actiune
+const TA_CFG = {
+  strongBuy: Number(process.env.SIGNAL_STRONG_BUY || 55),
+  strongSell: Number(process.env.SIGNAL_STRONG_SELL || -55),
+  minConfirms: Number(process.env.SIGNAL_MIN_CONFIRMS || 3),
+  minBars: Number(process.env.SIGNAL_MIN_BARS || 30),
+};
 
 const UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36";
 const INDEX_URL = "https://bvb.ro/FinancialInstruments/Indices/IndicesProfiles.aspx?i=BET";
@@ -214,12 +226,14 @@ async function pollTelegram() {
           await tgSend(`Nu cunosc simbolul „${target}". Folosește /reset SIMBOL sau /reset all.`);
         }
       } else if (cmd === "/status") {
+        const sigIcon = { STRONG_BUY: "🟢🚀", BUY: "🟢", NEUTRAL: "⚪", REDUCE: "🔴", STRONG_SELL: "🔴⚠️", INSUFICIENT: "…" };
         const rows = Object.entries(state.symbols)
-          .map(([sym, s]) => ({ sym, dropPct: s.dropPct ?? 0, muted: s.muted, trend: s.trend || "none" }))
-          .sort((a, b) => a.dropPct - b.dropPct);
-        const line = (r) => `${r.trend === "up" ? "📈" : r.trend === "down" ? "📉" : "▫️"} <b>${r.sym}</b> ${r.dropPct >= 0 ? "+" : ""}${r.dropPct.toFixed(2)}%${r.muted ? " 🔕" : ""}`;
+          .map(([sym, s]) => ({ sym, dropPct: s.dropPct ?? 0, muted: s.muted, trend: s.trend || "none", sig: s.sigStateNow || "INSUFICIENT", score: s.sigScore ?? null }))
+          .sort((a, b) => (b.score ?? -999) - (a.score ?? -999));
+        const line = (r) => `${sigIcon[r.sig] || "⚪"} <b>${r.sym}</b> ${r.score != null ? (r.score >= 0 ? "+" : "") + r.score : "—"}` +
+          ` ${r.trend === "up" ? "📈" : r.trend === "down" ? "📉" : ""} ${r.dropPct >= 0 ? "+" : ""}${r.dropPct.toFixed(2)}%${r.muted ? " 🔕" : ""}`;
         const body = rows.length ? rows.map(line).join("\n") : "Încă nu există date (bursa închisă sau prima verificare în curs).";
-        await tgSend(`📊 <b>Status BET</b> (${isMarketOpen() ? "bursă deschisă" : "bursă închisă"})\n${body}\n\n<i>🔕 = alerte oprite · /reset SIMBOL le reia</i>`);
+        await tgSend(`📊 <b>Status BET</b> (${isMarketOpen() ? "bursă deschisă" : "bursă închisă"})\n<i>semnal · scor tehnic · trend · variație zi</i>\n${body}\n\n<i>🟢🚀 cumpărare puternică · 🔴⚠️ vânzare/risc · 🔕 oprit · /reset SIMBOL</i>`);
       } else if (cmd === "/start" || cmd === "/help") {
         await tgSend("👋 Bot alerte BET.\nComenzi:\n/status — starea celor 10 acțiuni\n/reset SIMBOL — reia alertele pentru o acțiune\n/reset all — reia toate");
       }
@@ -286,7 +300,9 @@ async function checkPrices() {
 
   const alerts = [];
   const trendAlerts = [];
+  const signalAlerts = [];
   const nowISO = new Date().toISOString();
+  const nowMs = Date.now();
   top.forEach((c, i) => {
     const { last, ref } = quotes[i];
     if (last == null || ref == null || ref <= 0) return;
@@ -315,6 +331,22 @@ async function checkPrices() {
       trendAlerts.push({ symbol: c.symbol, name: c.name, ref, ...tr, history: s.history.map((h) => h.p) });
     } else if (tr.state === "none") {
       // pastram ultima directie clara ca sa nu re-alertam la fiecare oscilatie scurta
+    }
+
+    // ---- Semnal tehnic (Faza 1) — buffer multi-zi de bare 15 min ----
+    if (SIGNAL_ENABLED) {
+      s.bars = (s.bars || []).concat(last);
+      if (s.bars.length > BARS_MAX) s.bars = s.bars.slice(-BARS_MAX);
+      const a = analyze(s.bars, TA_CFG);
+      s.sigScore = a.score; s.sigStateNow = a.state;
+      const strong = a.state === "STRONG_BUY" || a.state === "STRONG_SELL";
+      const coolOk = !s.lastSigAt || nowMs - s.lastSigAt >= SIGNAL_COOLDOWN_MIN * 60000;
+      if (strong && a.state !== (s.sigNotified || "none") && coolOk) {
+        s.sigNotified = a.state; s.lastSigAt = nowMs;
+        signalAlerts.push({ symbol: c.symbol, name: c.name, ref, last, ...a, bars: s.bars.slice() });
+      } else if (!strong) {
+        s.sigNotified = "none"; // re-armam cand iese din starea puternica
+      }
     }
   });
 
@@ -348,7 +380,35 @@ async function checkPrices() {
     log(`TREND ${t.symbol} ${t.state} ${t.movePct.toFixed(2)}% R2=${t.r2.toFixed(2)}`);
   }
 
-  if (!alerts.length && !trendAlerts.length) log(`Verificat ${top.length} actiuni — nicio alerta noua.`);
+  for (const a of signalAlerts) {
+    const buy = a.state === "STRONG_BUY";
+    const head = buy ? "🟢🚀 <b>SEMNAL PUTERNIC DE CUMPĂRARE</b>" : "🔴⚠️ <b>SEMNAL PUTERNIC DE VÂNZARE / RISC</b>";
+    const i = a.ind;
+    const linii = [
+      head,
+      `<b>${a.symbol}</b> · ${a.name}`,
+      `Scor tehnic: <b>${a.score >= 0 ? "+" : ""}${a.score}</b>/100 (${a.confirms} confirmări)`,
+      `Preț: <b>${fmt(a.last)}</b> RON` + (i.rsi != null ? ` · RSI ${i.rsi.toFixed(0)}` : ""),
+      "",
+      "Motive:",
+      ...a.reasons.map((r) => `• ${r}`),
+      "",
+      "<i>Semnal tehnic informativ — nu constituie recomandare de investiție.</i>",
+    ];
+    const em = a.emaSeries || {};
+    const overlays = [];
+    if (em.ema9) overlays.push({ points: em.ema9, r: 245, g: 158, b: 11 });   // EMA9 portocaliu
+    if (em.ema21) overlays.push({ points: em.ema21, r: 96, g: 165, b: 250 });  // EMA21 albastru
+    if (em.ema50) overlays.push({ points: em.ema50, r: 148, g: 163, b: 184 }); // EMA50 gri
+    try {
+      const png = renderLineChartPNG({ points: a.bars, up: buy, refPrice: a.ref, overlays });
+      await tgPhoto(png, linii.join("\n"));
+    } catch (e) { log("signal chart fail:", e.message); await tgSend(linii.join("\n")); }
+    log(`SEMNAL ${a.symbol} ${a.state} scor=${a.score} confirms=${a.confirms}`);
+  }
+
+  if (!alerts.length && !trendAlerts.length && !signalAlerts.length)
+    log(`Verificat ${top.length} actiuni — nicio alerta noua.`);
 }
 
 // ---------- Bucle ----------

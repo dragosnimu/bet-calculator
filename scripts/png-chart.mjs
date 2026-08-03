@@ -26,7 +26,8 @@ function chunk(type, data) {
 
 // Ruleaza un grafic linie. points = array de numere (preturi), in ordine cronologica.
 // up = true (verde) / false (rosu). refPrice = linie de referinta (optional).
-export function renderLineChartPNG({ points, up = true, refPrice = null, width = 820, height = 380 }) {
+// overlays = [{ points:[...|null], r,g,b }] — ex. linii EMA (null = fara valoare pe acel punct)
+export function renderLineChartPNG({ points, up = true, refPrice = null, overlays = [], width = 820, height = 380 }) {
   const px = new Uint8Array(width * height * 3);
   const set = (x, y, r, g, b) => {
     x |= 0; y |= 0;
@@ -61,6 +62,7 @@ export function renderLineChartPNG({ points, up = true, refPrice = null, width =
   const n = points.length;
   let min = Math.min(...points), max = Math.max(...points);
   if (refPrice != null) { min = Math.min(min, refPrice); max = Math.max(max, refPrice); }
+  for (const ov of overlays) for (const v of ov.points) if (v != null) { if (v < min) min = v; if (v > max) max = v; }
   if (min === max) { min -= 1; max += 1; }
   const pad = (max - min) * 0.08; min -= pad; max += pad;
 
@@ -72,6 +74,14 @@ export function renderLineChartPNG({ points, up = true, refPrice = null, width =
 
   // linie de referinta (inchiderea de ieri) — gri, punctata
   if (refPrice != null) { const y = yOf(refPrice) | 0; hline(y, L, R, 100, 116, 139, 5); }
+
+  // overlays (EMA etc.) — sub linia pretului, mai subtiri
+  for (const ov of overlays) {
+    for (let i = 1; i < n; i++) {
+      if (ov.points[i - 1] == null || ov.points[i] == null) continue;
+      line(xOf(i - 1), yOf(ov.points[i - 1]), xOf(i), yOf(ov.points[i]), ov.r, ov.g, ov.b, 1);
+    }
+  }
 
   // culoarea trendului
   const [cr, cg, cb] = up ? [16, 185, 129] : [239, 68, 68];

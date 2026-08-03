@@ -51,6 +51,11 @@ services:
       - TREND_WINDOW=${TREND_WINDOW:-8}
       - TREND_MIN_MOVE=${TREND_MIN_MOVE:-1.0}
       - TREND_MIN_R2=${TREND_MIN_R2:-0.6}
+      - SIGNAL_ENABLED=${SIGNAL_ENABLED:-true}
+      - SIGNAL_STRONG_BUY=${SIGNAL_STRONG_BUY:-55}
+      - SIGNAL_STRONG_SELL=${SIGNAL_STRONG_SELL:--55}
+      - SIGNAL_MIN_CONFIRMS=${SIGNAL_MIN_CONFIRMS:-3}
+      - SIGNAL_COOLDOWN_MIN=${SIGNAL_COOLDOWN_MIN:-45}
     volumes:
       - alert-data:/data
     # Worker-ul nu e server web -> dezactivam healthcheck-ul HTTP mostenit din Dockerfile.
