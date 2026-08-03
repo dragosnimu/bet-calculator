@@ -4,6 +4,9 @@ Aplicație web care distribuie o sumă în RON pe primii **10 constituenți ai i
 
 Prețurile sunt aduse **live de pe [bvb.ro](https://bvb.ro)**, fără chei API și fără dependențe externe de scraping.
 
+> 📖 Pentru arhitectura completă, componente, fluxuri de date, modelul de stare și toate funcțiile
+> worker-ului de alerte, vezi **[DOCUMENTATIE.md](DOCUMENTATIE.md)**.
+
 ---
 
 ## Cum funcționează prețurile
