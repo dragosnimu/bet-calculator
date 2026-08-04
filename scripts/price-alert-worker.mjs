@@ -5,6 +5,8 @@
 //   (Luni-Vineri, MARKET_OPEN_HOUR..MARKET_CLOSE_HOUR, fus ALERT_TZ = Europe/Bucharest).
 // - Alerta cand o actiune scade cu >= 1% (ALERT_DROP_STEP) fata de inchiderea de ieri
 //   ("Pret referinta"). Re-alerta la fiecare treapta suplimentara (-1%, -2%, -3% ...).
+// - Simetric: alerta cand o actiune creste cu >= 1% (ALERT_RISE_STEP) fata de inchiderea
+//   de ieri, cu re-alerta la fiecare treapta suplimentara (+1%, +2%, +3% ...).
 // - Acknowledge: buton inline in Telegram SAU din aplicatie -> opreste alertele pentru
 //   acea actiune pana la Reset din aplicatie. Resetare automata zilnica.
 // - Zero dependente externe (doar fetch + fs).
@@ -19,7 +21,8 @@ const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || "";
 const CHAT_ID = process.env.TELEGRAM_CHAT_ID || "";
 const STATE_FILE = process.env.ALERT_STATE_FILE || "/data/alert-state.json";
 const INTERVAL_MIN = Number(process.env.ALERT_INTERVAL_MIN || 15);
-const DROP_STEP = Number(process.env.ALERT_DROP_STEP || 1); // procente
+const DROP_STEP = Number(process.env.ALERT_DROP_STEP || 1); // procente (scadere)
+const RISE_STEP = Number(process.env.ALERT_RISE_STEP || DROP_STEP); // procente (crestere)
 const TZ = process.env.ALERT_TZ || "Europe/Bucharest";
 const OPEN_H = Number(process.env.MARKET_OPEN_HOUR || 10);
 const CLOSE_H = Number(process.env.MARKET_CLOSE_HOUR || 18);
@@ -425,11 +428,12 @@ async function checkPrices() {
     log(`Zi noua de tranzactionare (${today}) — resetez alertele si istoricul.`);
     state.day = today;
     for (const s of Object.values(state.symbols)) {
-      s.lastAlerted = 0; s.muted = false; s.history = []; s.trendNotified = "none";
+      s.lastAlerted = 0; s.lastRiseAlerted = 0; s.muted = false; s.history = []; s.trendNotified = "none";
     }
   }
 
   const alerts = [];
+  const riseAlerts = [];
   const trendAlerts = [];
   const signalAlerts = [];
   const nowISO = new Date().toISOString();
@@ -437,23 +441,30 @@ async function checkPrices() {
   top.forEach((c, i) => {
     const { last, ref } = quotes[i];
     if (last == null || ref == null || ref <= 0) return;
-    const dropPct = ((last - ref) / ref) * 100; // negativ cand scade
+    const dropPct = ((last - ref) / ref) * 100; // negativ cand scade, pozitiv cand creste
     const down = -dropPct;                       // magnitudinea scaderii
     const level = down >= DROP_STEP ? Math.floor(down / DROP_STEP) : 0;
+    const up = dropPct;                          // magnitudinea cresterii
+    const riseLevel = up >= RISE_STEP ? Math.floor(up / RISE_STEP) : 0;
 
-    const s = (state.symbols[c.symbol] ||= { lastAlerted: 0, muted: false });
-    s.name = c.name; s.ref = ref; s.last = last; s.dropPct = dropPct; s.level = level;
+    const s = (state.symbols[c.symbol] ||= { lastAlerted: 0, lastRiseAlerted: 0, muted: false });
+    s.name = c.name; s.ref = ref; s.last = last; s.dropPct = dropPct; s.level = level; s.riseLevel = riseLevel;
 
     // Fundamentale — pastram ultima valoare valida (BVB serveste ocazional pagini fara ele).
     const f = quotes[i].fund;
     if (f) { s.fund = { ...(s.fund || {}), ...Object.fromEntries(Object.entries(f).filter(([, v]) => v != null)) }; }
 
-    // Daca si-a revenit sub pragul alertat, re-armam treapta.
+    // Daca si-a revenit sub pragul alertat, re-armam treapta (scadere si crestere).
     if (level < (s.lastAlerted || 0)) s.lastAlerted = level;
+    if (riseLevel < (s.lastRiseAlerted || 0)) s.lastRiseAlerted = riseLevel;
 
     if (!s.muted && level > (s.lastAlerted || 0)) {
       s.lastAlerted = level;
       alerts.push({ symbol: c.symbol, name: c.name, last, ref, dropPct, level });
+    }
+    if (!s.muted && riseLevel > (s.lastRiseAlerted || 0)) {
+      s.lastRiseAlerted = riseLevel;
+      riseAlerts.push({ symbol: c.symbol, name: c.name, last, ref, dropPct, level: riseLevel });
     }
 
     // ---- Trend intraday ----
@@ -496,6 +507,17 @@ async function checkPrices() {
     const markup = { inline_keyboard: [[{ text: `🔕 Oprește alertele ${a.symbol}`, callback_data: `ack:${a.symbol}` }]] };
     await tgSend(text, markup);
     log(`ALERTA ${a.symbol} nivel -${a.level * DROP_STEP}% (${a.dropPct.toFixed(2)}%)`);
+  }
+
+  for (const a of riseAlerts) {
+    const text =
+      `🔺 <b>${a.symbol}</b> +${a.dropPct.toFixed(2)}% azi\n` +
+      `${a.name}\n` +
+      `Preț: <b>${fmt(a.last)}</b> RON (referință ${fmt(a.ref)})\n` +
+      `<i>Prag atins: +${a.level * RISE_STEP}%</i>`;
+    const markup = { inline_keyboard: [[{ text: `🔕 Oprește alertele ${a.symbol}`, callback_data: `ack:${a.symbol}` }]] };
+    await tgSend(text, markup);
+    log(`ALERTA ${a.symbol} nivel +${a.level * RISE_STEP}% (${a.dropPct.toFixed(2)}%)`);
   }
 
   for (const t of trendAlerts) {
@@ -567,7 +589,7 @@ async function telegramLoop() {
 // Ruleaza buclele doar cand scriptul e executat direct (nu cand e importat in teste).
 const isMain = process.argv[1] && import.meta.url === `file://${process.argv[1].replace(/\\/g, "/")}`;
 if (isMain) {
-  log(`Worker alerte pornit. Interval=${INTERVAL_MIN}min, prag=${DROP_STEP}%, program=${OPEN_H}:00-${CLOSE_H}:00 ${TZ}`);
+  log(`Worker alerte pornit. Interval=${INTERVAL_MIN}min, prag scadere=-${DROP_STEP}% / crestere=+${RISE_STEP}%, program=${OPEN_H}:00-${CLOSE_H}:00 ${TZ}`);
   log(BOT_TOKEN && CHAT_ID ? "Telegram: configurat." : "Telegram: NECONFIGURAT (mod dry-run, alertele apar doar in log).");
   priceLoop();
   telegramLoop();

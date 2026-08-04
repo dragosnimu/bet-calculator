@@ -44,6 +44,7 @@ services:
       - ALERT_STATE_FILE=/data/alert-state.json
       - ALERT_INTERVAL_MIN=${ALERT_INTERVAL_MIN:-15}
       - ALERT_DROP_STEP=${ALERT_DROP_STEP:-1}
+      - ALERT_RISE_STEP=${ALERT_RISE_STEP:-1}
       - ALERT_TZ=${ALERT_TZ:-Europe/Bucharest}
       - MARKET_OPEN_HOUR=${MARKET_OPEN_HOUR:-10}
       - MARKET_CLOSE_HOUR=${MARKET_CLOSE_HOUR:-18}
