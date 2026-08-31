@@ -82,10 +82,10 @@ curl -s http://localhost:3000/api/prices
 
 Un worker separat (`bet-alert-worker`, pornit automat de docker-compose) verifică prețurile
 **la fiecare 15 minute cât e bursa deschisă** (Luni–Vineri, 10:00–18:00, ora României) și trimite
-o alertă pe Telegram când o acțiune scade cu **≥1% față de închiderea de ieri**. Re-alertează la
-fiecare treaptă suplimentară (−1%, −2%, −3%…), cu resetare automată la începutul fiecărei zile.
-**Simetric**, primești o alertă și când o acțiune **crește cu ≥1%** față de închiderea de ieri
-(+1%, +2%, +3%…). Pragul de creștere e reglabil separat din `.env` (`ALERT_RISE_STEP`, implicit `1`).
+o alertă pe Telegram când o acțiune scade cu **≥3% față de închiderea de ieri**. Re-alertează la
+fiecare treaptă suplimentară (−3%, −6%, −9%…), cu resetare automată la începutul fiecărei zile.
+Primești o alertă și când o acțiune **crește cu ≥1%** față de închiderea de ieri (+1%, +2%, +3%…).
+Ambele praguri sunt reglabile separat din `.env` (`ALERT_DROP_STEP`, `ALERT_RISE_STEP`).
 
 **Acknowledge / Reset (totul din Telegram):** fiecare alertă are un buton *„🔕 Oprește alertele"*
 — după care nu mai primești nimic pentru acea acțiune. O reactivezi cu comanda **`/reset SIMBOL`**
@@ -173,7 +173,7 @@ alertele de semnal tehnic.
 | `TELEGRAM_BOT_TOKEN`  | —                 | Tokenul botului de la @BotFather (alerte)    |
 | `TELEGRAM_CHAT_ID`    | —                 | Chat ID-ul unde vin alertele                 |
 | `ALERT_INTERVAL_MIN`  | `15`              | La câte minute se verifică prețurile         |
-| `ALERT_DROP_STEP`     | `1`               | Pragul de scădere, în %                      |
+| `ALERT_DROP_STEP`     | `3`               | Pragul de scădere, în %                      |
 | `ALERT_RISE_STEP`     | `1`               | Pragul de creștere, în %                     |
 | `ALERT_TZ`            | `Europe/Bucharest`| Fusul orar pentru programul bursei           |
 | `MARKET_OPEN_HOUR`    | `10`              | Ora de deschidere a bursei                   |
