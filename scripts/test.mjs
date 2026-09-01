@@ -56,6 +56,15 @@ test("regresie securitate worker (test-worker-security.mjs)", () => {
   assert(sec.status === 0, `suita de securitate a picat (exit ${sec.status})`);
 });
 
+// Suita rendererului de grafice PNG (font bitmap, axe/scala, legenda, PNG valid).
+console.log("\n🖼️  Grafic PNG:");
+const png = spawnSync(process.execPath, [resolve(root, "scripts/test-png-chart.mjs")], { encoding: "utf8", timeout: 60000 });
+process.stdout.write(png.stdout || "");
+if (png.stderr) process.stderr.write(png.stderr);
+test("renderer grafic PNG (test-png-chart.mjs)", () => {
+  assert(png.status === 0, `suita PNG a picat (exit ${png.status})`);
+});
+
 console.log("\n" + "═".repeat(45));
 console.log(`  ${p + f} teste | ✅ ${p} | ❌ ${f}`);
 console.log("═".repeat(45) + "\n");

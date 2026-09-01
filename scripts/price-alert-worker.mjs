@@ -115,8 +115,11 @@ async function emitPriceAlert(a, dir) {
   if (a.ta && a.history && a.history.length >= 2) {
     const caption = `${base}\n━━━━━━━━━━━\n${a.ta.text}\n<i>informativ — nu recomandare de investiție</i>`;
     try {
-      const ov = [{ points: emaSeries(a.history, 9), r: 245, g: 158, b: 11 }]; // EMA9 (chihlimbar)
-      const png = renderLineChartPNG({ points: a.history, up: dir === "up", refPrice: a.ref, overlays: ov });
+      const ov = [{ points: emaSeries(a.history, 9), r: 245, g: 158, b: 11, label: "EMA9" }]; // EMA9 (chihlimbar)
+      const png = renderLineChartPNG({
+        points: a.history, up: dir === "up", refPrice: a.ref, overlays: ov,
+        title: `${a.symbol} · intraday 15m`, refLabel: "Referinta = inchidere ieri",
+      });
       await tgPhoto(png, caption, markup);
     } catch (e) { log("alert chart fail:", e.message); await tgSend(caption, markup); }
   } else {
@@ -612,7 +615,7 @@ async function checkPrices() {
       `${t.movePct >= 0 ? "+" : ""}${t.movePct.toFixed(2)}% pe ultimele ~${ore}h (${t.n} puncte, R²=${t.r2.toFixed(2)})\n` +
       `Preț: ${fmt(t.first)} → <b>${fmt(t.last)}</b> RON (referință ${fmt(t.ref)})`;
     try {
-      const png = renderLineChartPNG({ points: t.history, up, refPrice: t.ref });
+      const png = renderLineChartPNG({ points: t.history, up, refPrice: t.ref, title: `${t.symbol} · trend intraday`, refLabel: "Referinta = inchidere ieri" });
       await tgPhoto(png, caption);
     } catch (e) { log("chart/photo fail:", e.message); await tgSend(caption); }
     log(`TREND ${t.symbol} ${t.state} ${t.movePct.toFixed(2)}% R2=${t.r2.toFixed(2)}`);
@@ -641,11 +644,14 @@ async function checkPrices() {
     ];
     const em = a.emaSeries || {};
     const overlays = [];
-    if (em.ema9) overlays.push({ points: em.ema9, r: 245, g: 158, b: 11 });   // EMA9 portocaliu
-    if (em.ema21) overlays.push({ points: em.ema21, r: 96, g: 165, b: 250 });  // EMA21 albastru
-    if (em.ema50) overlays.push({ points: em.ema50, r: 148, g: 163, b: 184 }); // EMA50 gri
+    if (em.ema9) overlays.push({ points: em.ema9, r: 245, g: 158, b: 11, label: "EMA9" });   // EMA9 portocaliu
+    if (em.ema21) overlays.push({ points: em.ema21, r: 96, g: 165, b: 250, label: "EMA21" });  // EMA21 albastru
+    if (em.ema50) overlays.push({ points: em.ema50, r: 148, g: 163, b: 184, label: "EMA50" }); // EMA50 gri
     try {
-      const png = renderLineChartPNG({ points: a.bars, up: buy, refPrice: a.ref, overlays });
+      const png = renderLineChartPNG({
+        points: a.bars, up: buy, refPrice: a.ref, overlays,
+        title: `${a.symbol} · ${buy ? "semnal cumparare" : "semnal vanzare"}`, refLabel: "Referinta",
+      });
       await tgPhoto(png, linii.join("\n"));
     } catch (e) { log("signal chart fail:", e.message); await tgSend(linii.join("\n")); }
     log(`SEMNAL ${a.symbol} ${a.state} scor=${a.score} confirms=${a.confirms}`);
