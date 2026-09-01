@@ -87,6 +87,16 @@ fiecare treaptă suplimentară (−3%, −6%, −9%…), cu resetare automată l
 Primești o alertă și când o acțiune **crește cu ≥1%** față de închiderea de ieri (+1%, +2%, +3%…).
 Ambele praguri sunt reglabile separat din `.env` (`ALERT_DROP_STEP`, `ALERT_RISE_STEP`).
 
+**Verdict de continuare a trendului (analiză tehnică atașată):** fiecare alertă de scădere/creștere
+include automat o **analiză tehnică** care spune dacă mișcarea **probabil continuă sau nu**. Rulează
+motorul TA (EMA/RSI/MACD/Bollinger/breakout, scor −100…+100) pe barele multi-zi, compară panta
+intraday cu trendul de fond și dă unul din **5 verdicte** relativ la direcția alertei — *Continuă
+(puternic/slab) · Incert · Slăbește · Posibilă inversare* — cu **scor**, **nivel de încredere (%)**,
+indicatorii cheie și un **grafic intraday** cu EMA. Verdictul e marcat cu **culorile semaforului**
+(🔴 preț probabil în scădere · 🟡 incert/slăbește · 🟢 preț probabil în urcare). Dacă încă nu sunt
+destule bare (sub `VERDICT_MIN_BARS`, implicit 30), pleacă doar alerta simplă de preț. Verdictul de
+fond apare și în `/status` (🟢↑ / 🟡→ / 🔴↓). *Informativ — nu constituie recomandare de investiție.*
+
 **Acknowledge / Reset (totul din Telegram):** fiecare alertă are un buton *„🔕 Oprește alertele"*
 — după care nu mai primești nimic pentru acea acțiune. O reactivezi cu comanda **`/reset SIMBOL`**
 (sau `/reset all` pentru toate). Comanda **`/status`** îți arată oricând starea celor 10 acțiuni
