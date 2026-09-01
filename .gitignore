@@ -18,8 +18,12 @@ npm-debug.log*
 .DS_Store
 Thumbs.db
 
-# Temp scraping dumps
+# Temp scraping dumps / ad-hoc test scripts
 scripts/_*.html
+scripts/_*.mjs
+
+# Claude Code — setari locale per-masina (agentii din .claude/agents/ raman versionati)
+.claude/settings.local.json
 
 # Verification screenshots
 *.jpeg
