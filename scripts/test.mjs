@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import { readFileSync, existsSync } from "fs";
 import { resolve } from "path";
+import { spawnSync } from "child_process";
 const root = resolve(import.meta.dirname, "..");
 let p = 0, f = 0;
 function test(name, fn) { try { fn(); console.log(`  ✅ ${name}`); p++; } catch (e) { console.log(`  ❌ ${name}\n     → ${e.message}`); f++; } }
@@ -44,6 +45,15 @@ test("fără chei hardcodate", () => {
   for (const f of ["components/BETCalculator.jsx","app/api/prices/route.js"]) {
     assert(!readFileSync(resolve(root, f), "utf8").includes("sk-ant-"), `Cheie în ${f}!`);
   }
+});
+
+// Suita de regresie de securitate a worker-ului (autorizare Telegram, escapare HTML, invarianti TA).
+console.log("\n🔒 Worker (securitate):");
+const sec = spawnSync(process.execPath, [resolve(root, "scripts/test-worker-security.mjs")], { encoding: "utf8", timeout: 60000 });
+process.stdout.write(sec.stdout || "");
+if (sec.stderr) process.stderr.write(sec.stderr);
+test("regresie securitate worker (test-worker-security.mjs)", () => {
+  assert(sec.status === 0, `suita de securitate a picat (exit ${sec.status})`);
 });
 
 console.log("\n" + "═".repeat(45));

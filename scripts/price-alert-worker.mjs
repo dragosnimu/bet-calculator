@@ -3,8 +3,8 @@
 //
 // - Verifica la fiecare ALERT_INTERVAL_MIN (default 15) minute, doar cat e bursa deschisa
 //   (Luni-Vineri, MARKET_OPEN_HOUR..MARKET_CLOSE_HOUR, fus ALERT_TZ = Europe/Bucharest).
-// - Alerta cand o actiune scade cu >= 1% (ALERT_DROP_STEP) fata de inchiderea de ieri
-//   ("Pret referinta"). Re-alerta la fiecare treapta suplimentara (-1%, -2%, -3% ...).
+// - Alerta cand o actiune scade cu >= 3% (ALERT_DROP_STEP) fata de inchiderea de ieri
+//   ("Pret referinta"). Re-alerta la fiecare treapta suplimentara (-3%, -6%, -9% ...).
 // - Simetric: alerta cand o actiune creste cu >= 1% (ALERT_RISE_STEP) fata de inchiderea
 //   de ieri, cu re-alerta la fiecare treapta suplimentara (+1%, +2%, +3% ...).
 // - Acknowledge: buton inline in Telegram SAU din aplicatie -> opreste alertele pentru
@@ -107,7 +107,7 @@ async function emitPriceAlert(a, dir) {
     ? `🔻 <b>${a.symbol}</b> −${(-a.dropPct).toFixed(2)}% azi`
     : `🔺 <b>${a.symbol}</b> +${a.dropPct.toFixed(2)}% azi`;
   const base =
-    `${head}\n${a.name}\n` +
+    `${head}\n${esc(a.name)}\n` +
     `Preț: <b>${fmt(a.last)}</b> RON (referință ${fmt(a.ref)})\n` +
     `<i>Prag atins: ${sign}${a.level * step}%</i>`;
   const markup = { inline_keyboard: [[{ text: `🔕 Oprește alertele ${a.symbol}`, callback_data: `ack:${a.symbol}` }]] };
@@ -142,6 +142,9 @@ let newsTick = 0;
 const DETAIL_URL = (s) =>
   `https://bvb.ro/FinancialInstruments/Details/FinancialInstrumentsDetails.aspx?s=${encodeURIComponent(s)}`;
 
+// Escapa caracterele periculoase pentru HTML (parse_mode:'HTML' la Telegram), in ordinea
+// corecta (& intai, apoi < si >), aplicat pe TOATE valorile dinamice inainte de inserare.
+const esc = (s) => String(s ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 const stripTags = (s) => s.replace(/<[^>]*>/g, "").trim();
 const toNum = (s) => {
   const v = parseFloat(String(s).trim().replace(/\./g, "").replace(",", "."));
@@ -253,6 +256,7 @@ async function tgSend(text, replyMarkup) {
     if (replyMarkup) body.reply_markup = replyMarkup;
     const r = await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, {
       method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
+      signal: AbortSignal.timeout(15000),
     });
     if (!r.ok) log("Telegram sendMessage err", r.status, await r.text());
   } catch (e) { log("Telegram send fail:", e.message); }
@@ -266,7 +270,7 @@ async function tgPhoto(png, caption, replyMarkup) {
     form.append("parse_mode", "HTML");
     if (replyMarkup) form.append("reply_markup", JSON.stringify(replyMarkup));
     form.append("photo", new Blob([png], { type: "image/png" }), "trend.png");
-    const r = await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendPhoto`, { method: "POST", body: form });
+    const r = await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendPhoto`, { method: "POST", body: form, signal: AbortSignal.timeout(15000) });
     if (!r.ok) log("Telegram sendPhoto err", r.status, await r.text());
   } catch (e) { log("Telegram sendPhoto fail:", e.message); }
 }
@@ -294,11 +298,20 @@ async function pollTelegram() {
     for (const u of data.result) {
       state.tgOffset = u.update_id;
 
+      // Autorizare: proceseaza doar update-uri din chat-ul configurat. In dry-run (fara
+      // CHAT_ID) pastram comportamentul actual (acceptam orice, doar pentru testare locala).
+      if (CHAT_ID) {
+        const src = u.callback_query
+          ? (u.callback_query.message?.chat?.id ?? u.callback_query.from?.id)
+          : (u.message || u.edited_message)?.chat?.id;
+        if (String(src) !== CHAT_ID) { log("Update Telegram ignorat: expeditor neautorizat."); continue; }
+      }
+
       // Buton inline "Oprește alertele"
       const cq = u.callback_query;
       if (cq && typeof cq.data === "string" && cq.data.startsWith("ack:")) {
         const sym = cq.data.slice(4);
-        if (state.symbols[sym]) state.symbols[sym].muted = true;
+        if (Object.prototype.hasOwnProperty.call(state.symbols, sym)) state.symbols[sym].muted = true;
         await tgAnswer(cq.id, `🔕 ${sym}: alerte oprite. Reia cu /reset ${sym}`);
         log(`Ack din Telegram pentru ${sym}`);
         continue;
@@ -322,7 +335,7 @@ async function pollTelegram() {
           await tgSend(`🔔 ${target}: alerte reactivate.`);
           log(`Reset ${target} din Telegram`);
         } else {
-          await tgSend(`Nu cunosc simbolul „${target}". Folosește /reset SIMBOL sau /reset all.`);
+          await tgSend(`Nu cunosc simbolul „${esc(target)}". Folosește /reset SIMBOL sau /reset all.`);
         }
       } else if (cmd === "/status") {
         const sigIcon = { STRONG_BUY: "🟢🚀", BUY: "🟢", NEUTRAL: "⚪", REDUCE: "🔴", STRONG_SELL: "🔴⚠️", INSUFICIENT: "…" };
@@ -330,7 +343,7 @@ async function pollTelegram() {
         const rows = Object.entries(state.symbols)
           .map(([sym, s]) => ({ sym, dropPct: s.dropPct ?? 0, muted: s.muted, trend: s.trend || "none", sig: s.sigStateNow || "INSUFICIENT", score: s.sigScore ?? null, stance: s.taStance || "", per: s.fund?.per ?? null, divy: s.fund?.divy ?? null, senti: s.sentiment ?? null }))
           .sort((a, b) => (b.score ?? -999) - (a.score ?? -999));
-        const line = (r) => `${sigIcon[r.sig] || "⚪"} <b>${r.sym}</b> ${r.score != null ? (r.score >= 0 ? "+" : "") + r.score : "—"}${r.stance ? " " + r.stance : ""}` +
+        const line = (r) => `${sigIcon[r.sig] || "⚪"} <b>${esc(r.sym)}</b> ${r.score != null ? (r.score >= 0 ? "+" : "") + r.score : "—"}${r.stance ? " " + r.stance : ""}` +
           ` ${r.trend === "up" ? "📈" : r.trend === "down" ? "📉" : ""} ${r.dropPct >= 0 ? "+" : ""}${r.dropPct.toFixed(2)}%${r.muted ? " 🔕" : ""}` +
           `${r.per != null ? ` · P/E ${r.per}` : ""}${r.divy != null ? ` · div ${r.divy}%` : ""}${sIcon(r.senti)}`;
         const body = rows.length ? rows.map(line).join("\n") : "Încă nu există date (bursa închisă sau prima verificare în curs).";
@@ -427,7 +440,7 @@ async function checkAnnouncements() {
 
   for (const a of fresh) {
     const nm = state.symbols[a.sym]?.name || a.sym;
-    const text = `📢 <b>${a.sym}</b> — anunț nou BVB\n${nm}\n<i>${a.dt}</i>\n${a.title}`;
+    const text = `📢 <b>${esc(a.sym)}</b> — anunț nou BVB\n${esc(nm)}\n<i>${esc(a.dt)}</i>\n${esc(a.title)}`;
     await tgSend(text);
     log(`ANUNT ${a.sym} ${a.dt} :: ${a.title.slice(0, 50)}`);
   }
@@ -469,11 +482,11 @@ async function checkNews() {
     if (Math.abs(senti.score) >= SENTIMENT_MIN_ABS) {
       const emo = senti.score > 0 ? "🟢📰" : "🔴📰";
       const text =
-        `${emo} <b>${sym}</b> — sentiment ${senti.label.toUpperCase()} din știri\n` +
-        `${name}\n` +
+        `${emo} <b>${esc(sym)}</b> — sentiment ${esc(senti.label.toUpperCase())} din știri\n` +
+        `${esc(name)}\n` +
         `Scor sentiment: <b>${senti.score >= 0 ? "+" : ""}${senti.score.toFixed(2)}</b>\n` +
-        `${senti.summary}\n\n` +
-        fresh.slice(0, 3).map((f) => `• <a href="${f.link}">${f.title.slice(0, 90)}</a>`).join("\n") +
+        `${esc(senti.summary)}\n\n` +
+        fresh.slice(0, 3).map((f) => `• <a href="${esc(f.link)}">${esc(f.title.slice(0, 90))}</a>`).join("\n") +
         `\n\n<i>Analiză de sentiment informativă — nu constituie recomandare.</i>`;
       await tgSend(text);
     }
@@ -594,8 +607,8 @@ async function checkPrices() {
     const word = up ? "ASCENDENT" : "DESCENDENT";
     const ore = (t.n * INTERVAL_MIN / 60).toFixed(1);
     const caption =
-      `${arrow} <b>${t.symbol}</b> — trend clar ${word} (intraday)\n` +
-      `${t.name}\n` +
+      `${arrow} <b>${esc(t.symbol)}</b> — trend clar ${word} (intraday)\n` +
+      `${esc(t.name)}\n` +
       `${t.movePct >= 0 ? "+" : ""}${t.movePct.toFixed(2)}% pe ultimele ~${ore}h (${t.n} puncte, R²=${t.r2.toFixed(2)})\n` +
       `Preț: ${fmt(t.first)} → <b>${fmt(t.last)}</b> RON (referință ${fmt(t.ref)})`;
     try {
@@ -611,7 +624,7 @@ async function checkPrices() {
     const i = a.ind;
     const linii = [
       head,
-      `<b>${a.symbol}</b> · ${a.name}`,
+      `<b>${esc(a.symbol)}</b> · ${esc(a.name)}`,
       `Scor tehnic: <b>${a.score >= 0 ? "+" : ""}${a.score}</b>/100 (${a.confirms} confirmări)`,
       `Preț: <b>${fmt(a.last)}</b> RON` + (i.rsi != null ? ` · RSI ${i.rsi.toFixed(0)}` : ""),
       ...(a.fund && (a.fund.per != null || a.fund.divy != null)
