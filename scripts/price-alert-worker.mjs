@@ -105,7 +105,7 @@ async function emitPriceAlert(a, dir) {
   const sign = dir === "down" ? "−" : "+";
   const head = dir === "down"
     ? `🔻 <b>${a.symbol}</b> −${(-a.dropPct).toFixed(2)}% azi`
-    : `🔺 <b>${a.symbol}</b> +${a.dropPct.toFixed(2)}% azi`;
+    : `📈 <b>${a.symbol}</b> +${a.dropPct.toFixed(2)}% azi`;
   const base =
     `${head}\n${esc(a.name)}\n` +
     `Preț: <b>${fmt(a.last)}</b> RON (referință ${fmt(a.ref)})\n` +
