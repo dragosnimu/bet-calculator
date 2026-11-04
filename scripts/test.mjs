@@ -56,6 +56,15 @@ test("regresie securitate worker (test-worker-security.mjs)", () => {
   assert(sec.status === 0, `suita de securitate a picat (exit ${sec.status})`);
 });
 
+// Suita instrumentului EXTRA 4GLD (Xetra-Gold): fetcher Yahoo, praguri EUR 3%/3%, excludere news/anunturi.
+console.log("\n🥇 Worker (4GLD extra):");
+const gold = spawnSync(process.execPath, [resolve(root, "scripts/test-worker-gold.mjs")], { encoding: "utf8", timeout: 60000 });
+process.stdout.write(gold.stdout || "");
+if (gold.stderr) process.stderr.write(gold.stderr);
+test("regresie 4GLD worker (test-worker-gold.mjs)", () => {
+  assert(gold.status === 0, `suita 4GLD a picat (exit ${gold.status})`);
+});
+
 // Suita rendererului de grafice PNG (font bitmap, axe/scala, legenda, PNG valid).
 console.log("\n🖼️  Grafic PNG:");
 const png = spawnSync(process.execPath, [resolve(root, "scripts/test-png-chart.mjs")], { encoding: "utf8", timeout: 60000 });

@@ -27,6 +27,16 @@ const TZ = process.env.ALERT_TZ || "Europe/Bucharest";
 const OPEN_H = Number(process.env.MARKET_OPEN_HOUR || 10);
 const CLOSE_H = Number(process.env.MARKET_CLOSE_HOUR || 18);
 
+// Instrumente EXTRA, monitorizate separat de top-10 BET (ex. marfuri care nu-s pe BVB).
+// 4GLD = Xetra-Gold, cotat in EUR pe Xetra; pretul vine din Yahoo Finance (fara cheie).
+// Praguri simetrice 3%/3%, reglabile din env. NU intra in sentiment/anunturi (n-are emitent BVB).
+const GOLD_ENABLED = (process.env.GOLD_ENABLED ?? "true") !== "false";
+const GOLD_DROP_STEP = Number(process.env.GOLD_DROP_STEP || 3);
+const GOLD_RISE_STEP = Number(process.env.GOLD_RISE_STEP || 3);
+const EXTRA_INSTRUMENTS = GOLD_ENABLED
+  ? [{ symbol: "4GLD", name: "Xetra-Gold", yahooSymbol: "4GLD.DE", currency: "EUR", dropStep: GOLD_DROP_STEP, riseStep: GOLD_RISE_STEP, source: "yahoo" }]
+  : [];
+
 // Detectie trend (per actiune, intraday)
 const TREND_ENABLED = (process.env.TREND_ENABLED ?? "true") !== "false";
 const TREND_WINDOW = Number(process.env.TREND_WINDOW || 8);       // cate esantioane in fereastra (8 = ~2h)
@@ -101,14 +111,15 @@ function taStance(score, bars) {
 // Trimite o alerta de pret. Daca exista verdict TA, mesajul devine poza (grafic intraday
 // cu EMA9) + descrierea analizei; altfel doar text. dir = "down" | "up".
 async function emitPriceAlert(a, dir) {
-  const step = dir === "down" ? DROP_STEP : RISE_STEP;
+  const step = a.step; // pragul per-instrument, deja ales dupa directie la push
+  const cur = a.currency || "RON";
   const sign = dir === "down" ? "−" : "+";
   const head = dir === "down"
     ? `🔻 <b>${a.symbol}</b> −${(-a.dropPct).toFixed(2)}% azi`
     : `📈 <b>${a.symbol}</b> +${a.dropPct.toFixed(2)}% azi`;
   const base =
     `${head}\n${esc(a.name)}\n` +
-    `Preț: <b>${fmt(a.last)}</b> RON (referință ${fmt(a.ref)})\n` +
+    `Preț: <b>${fmt(a.last)}</b> ${esc(cur)} (referință ${fmt(a.ref)})\n` +
     `<i>Prag atins: ${sign}${a.level * step}%</i>`;
   const markup = { inline_keyboard: [[{ text: `🔕 Oprește alertele ${a.symbol}`, callback_data: `ack:${a.symbol}` }]] };
 
@@ -117,7 +128,7 @@ async function emitPriceAlert(a, dir) {
     try {
       const ov = [{ points: emaSeries(a.history, 9), r: 245, g: 158, b: 11, label: "EMA9" }]; // EMA9 (chihlimbar)
       const png = renderLineChartPNG({
-        points: a.history, up: dir === "up", refPrice: a.ref, overlays: ov,
+        points: a.history, up: dir === "up", refPrice: a.ref, overlays: ov, unit: cur,
         title: `${a.symbol} · intraday 15m`, refLabel: "Referinta = inchidere ieri",
       });
       await tgPhoto(png, caption, markup);
@@ -251,6 +262,32 @@ async function fetchQuote(symbol) {
   }
 }
 
+// Pret pentru instrumente extra din Yahoo Finance chart API (fara cheie). Parseaza meta:
+// last = regularMarketPrice, ref = chartPreviousClose (inchiderea anterioara), currency.
+// Returneaza { last, ref, currency } sau null la esec (retea/parse) — apelantul sare peste.
+const YAHOO_URL = (sym) =>
+  `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(sym)}?interval=1d&range=5d`;
+async function fetchYahooQuote(yahooSymbol) {
+  try {
+    const res = await fetch(YAHOO_URL(yahooSymbol), {
+      headers: { "User-Agent": UA, Accept: "application/json" },
+      signal: AbortSignal.timeout(12000),
+      cache: "no-store",
+    });
+    if (!res.ok) throw new Error(`status ${res.status}`);
+    const j = await res.json();
+    const meta = j?.chart?.result?.[0]?.meta;
+    if (!meta) return null;
+    const last = typeof meta.regularMarketPrice === "number" ? meta.regularMarketPrice : null;
+    const ref = typeof meta.chartPreviousClose === "number" ? meta.chartPreviousClose : null;
+    if (last == null || ref == null) return null;
+    const currency = typeof meta.currency === "string" ? meta.currency : null;
+    return { last, ref, currency };
+  } catch {
+    return null;
+  }
+}
+
 // ---------- Telegram ----------
 async function tgSend(text, replyMarkup) {
   if (!BOT_TOKEN || !CHAT_ID) { log("[DRY-RUN] Telegram:", text.replace(/\n/g, " | ")); return; }
@@ -352,7 +389,7 @@ async function pollTelegram() {
         const body = rows.length ? rows.map(line).join("\n") : "Încă nu există date (bursa închisă sau prima verificare în curs).";
         await tgSend(`📊 <b>Status BET</b> (${isMarketOpen() ? "bursă deschisă" : "bursă închisă"})\n<i>semnal · scor tehnic · fond 🔴🟡🟢 · trend · variație zi</i>\n${body}\n\n<i>🟢🚀 cumpărare puternică · 🔴⚠️ vânzare/risc · fond: 🟢 urcă/🟡 lateral/🔴 scade · 🔕 oprit · /reset SIMBOL</i>`);
       } else if (cmd === "/start" || cmd === "/help") {
-        await tgSend("👋 Bot alerte BET.\nComenzi:\n/status — starea celor 10 acțiuni\n/reset SIMBOL — reia alertele pentru o acțiune\n/reset all — reia toate");
+        await tgSend("👋 Bot alerte BET.\nComenzi:\n/status — starea celor 10 acțiuni BET + 4GLD (Xetra-Gold)\n/reset SIMBOL — reia alertele pentru o acțiune\n/reset all — reia toate");
       }
     }
     saveState(state);
@@ -416,7 +453,8 @@ async function checkAnnouncements() {
   if (!reports.length) return;
 
   const state = loadState();
-  const watch = new Set(Object.keys(state.symbols || {}));
+  // Doar constituentii BVB au emitent/anunturi — instrumentele extra (marfuri, ex. 4GLD) se exclud.
+  const watch = new Set(Object.entries(state.symbols || {}).filter(([, s]) => !s.extra).map(([k]) => k));
   if (!watch.size) return; // inca nu stim ce actiuni urmarim (inainte de primul checkPrices)
 
   state.annSeen = state.annSeen || [];
@@ -457,7 +495,8 @@ async function checkNews() {
   if (newsTick++ % NEWS_EVERY_TICKS !== 0) return; // rulam ~o data pe ora
 
   const snap = loadState();
-  const symbols = Object.keys(snap.symbols || {});
+  // Sentiment doar pe actiuni BVB (au stiri/emitent). Instrumentele extra (ex. 4GLD) se exclud.
+  const symbols = Object.entries(snap.symbols || {}).filter(([, s]) => !s.extra).map(([k]) => k);
   if (!symbols.length) return;
   const wasSeeded = !!snap.newsSeeded;
   const seen = new Set(snap.newsSeen || []);
@@ -503,6 +542,79 @@ async function checkNews() {
   saveState(state);
 }
 
+// Proceseaza un singur instrument (actiune BVB sau instrument extra) prin aceeasi logica:
+// alerte scadere/crestere, trend intraday, semnal tehnic, verdict de continuare, buffere istoric.
+// cfg = { dropStep, riseStep, currency, extra } parametrizeaza pragurile si moneda per-instrument.
+// `out` acumuleaza alertele de emis. Modifica `state.symbols[c.symbol]` in loc.
+function processInstrument(c, quote, cfg, state, nowISO, nowMs, out) {
+  if (!quote) return;
+  const { last, ref } = quote;
+  if (last == null || ref == null || ref <= 0) return;
+  const dropPct = ((last - ref) / ref) * 100; // negativ cand scade, pozitiv cand creste
+  const down = -dropPct;                       // magnitudinea scaderii
+  const level = down >= cfg.dropStep ? Math.floor(down / cfg.dropStep) : 0;
+  const up = dropPct;                          // magnitudinea cresterii
+  const riseLevel = up >= cfg.riseStep ? Math.floor(up / cfg.riseStep) : 0;
+
+  const s = (state.symbols[c.symbol] ||= { lastAlerted: 0, lastRiseAlerted: 0, muted: false });
+  s.name = c.name; s.ref = ref; s.last = last; s.dropPct = dropPct; s.level = level; s.riseLevel = riseLevel;
+  s.currency = cfg.currency; s.extra = !!cfg.extra;
+
+  // Fundamentale — pastram ultima valoare valida (doar BVB le ofera; extra nu au `fund`).
+  const f = quote.fund;
+  if (f) { s.fund = { ...(s.fund || {}), ...Object.fromEntries(Object.entries(f).filter(([, v]) => v != null)) }; }
+
+  // Daca si-a revenit sub pragul alertat, re-armam treapta (scadere si crestere).
+  if (level < (s.lastAlerted || 0)) s.lastAlerted = level;
+  if (riseLevel < (s.lastRiseAlerted || 0)) s.lastRiseAlerted = riseLevel;
+
+  // ---- Trend intraday (calculat inainte de alerte, ca sa-l atasam verdictului) ----
+  s.history = (s.history || []).concat({ t: nowISO, p: last });
+  if (s.history.length > HIST_MAX) s.history = s.history.slice(-HIST_MAX);
+  const tr = computeTrend(s.history);
+  s.trend = tr.state; s.trendMovePct = tr.movePct ?? null;
+  const intradayPrices = s.history.map((h) => h.p);
+
+  // ---- Analiza tehnica multi-zi (buffer bare 15 min) — folosita si de verdict, si de semnale ----
+  s.bars = (s.bars || []).concat(last);
+  if (s.bars.length > BARS_MAX) s.bars = s.bars.slice(-BARS_MAX);
+  const a = analyze(s.bars, TA_CFG);
+  s.sigScore = a.score; s.sigStateNow = a.state; s.sigBars = a.bars;
+  s.taStance = taStance(a.score, a.bars); // eticheta scurta pt. /status
+
+  // ---- Alerte de pret (cu verdict de continuare a trendului atasat) ----
+  if (!s.muted && level > (s.lastAlerted || 0)) {
+    s.lastAlerted = level;
+    out.alerts.push({ symbol: c.symbol, name: c.name, last, ref, dropPct, level,
+      currency: cfg.currency, step: cfg.dropStep,
+      ta: taVerdict("down", a, tr), history: intradayPrices });
+  }
+  if (!s.muted && riseLevel > (s.lastRiseAlerted || 0)) {
+    s.lastRiseAlerted = riseLevel;
+    out.riseAlerts.push({ symbol: c.symbol, name: c.name, last, ref, dropPct, level: riseLevel,
+      currency: cfg.currency, step: cfg.riseStep,
+      ta: taVerdict("up", a, tr), history: intradayPrices });
+  }
+
+  // ---- Alerta de trend intraday (mesaj separat cu grafic, doar la schimbarea de stare) ----
+  if (TREND_ENABLED && (tr.state === "up" || tr.state === "down") && tr.state !== (s.trendNotified || "none")) {
+    s.trendNotified = tr.state;
+    out.trendAlerts.push({ symbol: c.symbol, name: c.name, ref, currency: cfg.currency, ...tr, history: intradayPrices });
+  }
+
+  // ---- Semnal tehnic puternic (Faza 1) — separat, cu cooldown per actiune ----
+  if (SIGNAL_ENABLED) {
+    const strong = a.state === "STRONG_BUY" || a.state === "STRONG_SELL";
+    const coolOk = !s.lastSigAt || nowMs - s.lastSigAt >= SIGNAL_COOLDOWN_MIN * 60000;
+    if (strong && a.state !== (s.sigNotified || "none") && coolOk) {
+      s.sigNotified = a.state; s.lastSigAt = nowMs;
+      out.signalAlerts.push({ symbol: c.symbol, name: c.name, ref, last, currency: cfg.currency, ...a, bars: s.bars.slice(), fund: s.fund, sentiment: s.sentiment });
+    } else if (!strong) {
+      s.sigNotified = "none"; // re-armam cand iese din starea puternica
+    }
+  }
+}
+
 // ---------- Logica de verificare ----------
 async function checkPrices() {
   if (!isMarketOpen()) { log("Bursa inchisa — skip."); return; }
@@ -517,6 +629,9 @@ async function checkPrices() {
   const top = all.slice(0, 10);
 
   const quotes = await Promise.all(top.map((c) => fetchQuote(c.symbol)));
+  // Instrumente extra (sursa proprie, ex. Yahoo pt. 4GLD). La esec de retea -> quote null -> skip.
+  const extraQuotes = await Promise.all(EXTRA_INSTRUMENTS.map((e) => fetchYahooQuote(e.yahooSymbol)));
+  EXTRA_INSTRUMENTS.forEach((e, i) => { if (!extraQuotes[i]) log(`Extra ${e.symbol}: quote indisponibil — skip in acest tick.`); });
 
   let state = loadState();
   const today = todayStr();
@@ -528,77 +643,22 @@ async function checkPrices() {
     }
   }
 
-  const alerts = [];
-  const riseAlerts = [];
-  const trendAlerts = [];
-  const signalAlerts = [];
+  const out = { alerts: [], riseAlerts: [], trendAlerts: [], signalAlerts: [] };
   const nowISO = new Date().toISOString();
   const nowMs = Date.now();
-  top.forEach((c, i) => {
-    const { last, ref } = quotes[i];
-    if (last == null || ref == null || ref <= 0) return;
-    const dropPct = ((last - ref) / ref) * 100; // negativ cand scade, pozitiv cand creste
-    const down = -dropPct;                       // magnitudinea scaderii
-    const level = down >= DROP_STEP ? Math.floor(down / DROP_STEP) : 0;
-    const up = dropPct;                          // magnitudinea cresterii
-    const riseLevel = up >= RISE_STEP ? Math.floor(up / RISE_STEP) : 0;
 
-    const s = (state.symbols[c.symbol] ||= { lastAlerted: 0, lastRiseAlerted: 0, muted: false });
-    s.name = c.name; s.ref = ref; s.last = last; s.dropPct = dropPct; s.level = level; s.riseLevel = riseLevel;
+  // Actiuni BVB: praguri globale, moneda RON.
+  const bvbCfg = { dropStep: DROP_STEP, riseStep: RISE_STEP, currency: "RON", extra: false };
+  top.forEach((c, i) => processInstrument(c, quotes[i], bvbCfg, state, nowISO, nowMs, out));
 
-    // Fundamentale — pastram ultima valoare valida (BVB serveste ocazional pagini fara ele).
-    const f = quotes[i].fund;
-    if (f) { s.fund = { ...(s.fund || {}), ...Object.fromEntries(Object.entries(f).filter(([, v]) => v != null)) }; }
-
-    // Daca si-a revenit sub pragul alertat, re-armam treapta (scadere si crestere).
-    if (level < (s.lastAlerted || 0)) s.lastAlerted = level;
-    if (riseLevel < (s.lastRiseAlerted || 0)) s.lastRiseAlerted = riseLevel;
-
-    // ---- Trend intraday (calculat inainte de alerte, ca sa-l atasam verdictului) ----
-    s.history = (s.history || []).concat({ t: nowISO, p: last });
-    if (s.history.length > HIST_MAX) s.history = s.history.slice(-HIST_MAX);
-    const tr = computeTrend(s.history);
-    s.trend = tr.state; s.trendMovePct = tr.movePct ?? null;
-    const intradayPrices = s.history.map((h) => h.p);
-
-    // ---- Analiza tehnica multi-zi (buffer bare 15 min) — folosita si de verdict, si de semnale ----
-    s.bars = (s.bars || []).concat(last);
-    if (s.bars.length > BARS_MAX) s.bars = s.bars.slice(-BARS_MAX);
-    const a = analyze(s.bars, TA_CFG);
-    s.sigScore = a.score; s.sigStateNow = a.state; s.sigBars = a.bars;
-    s.taStance = taStance(a.score, a.bars); // eticheta scurta pt. /status
-
-    // ---- Alerte de pret (cu verdict de continuare a trendului atasat) ----
-    if (!s.muted && level > (s.lastAlerted || 0)) {
-      s.lastAlerted = level;
-      alerts.push({ symbol: c.symbol, name: c.name, last, ref, dropPct, level,
-        ta: taVerdict("down", a, tr), history: intradayPrices });
-    }
-    if (!s.muted && riseLevel > (s.lastRiseAlerted || 0)) {
-      s.lastRiseAlerted = riseLevel;
-      riseAlerts.push({ symbol: c.symbol, name: c.name, last, ref, dropPct, level: riseLevel,
-        ta: taVerdict("up", a, tr), history: intradayPrices });
-    }
-
-    // ---- Alerta de trend intraday (mesaj separat cu grafic, doar la schimbarea de stare) ----
-    if (TREND_ENABLED && (tr.state === "up" || tr.state === "down") && tr.state !== (s.trendNotified || "none")) {
-      s.trendNotified = tr.state;
-      trendAlerts.push({ symbol: c.symbol, name: c.name, ref, ...tr, history: intradayPrices });
-    }
-
-    // ---- Semnal tehnic puternic (Faza 1) — separat, cu cooldown per actiune ----
-    if (SIGNAL_ENABLED) {
-      const strong = a.state === "STRONG_BUY" || a.state === "STRONG_SELL";
-      const coolOk = !s.lastSigAt || nowMs - s.lastSigAt >= SIGNAL_COOLDOWN_MIN * 60000;
-      if (strong && a.state !== (s.sigNotified || "none") && coolOk) {
-        s.sigNotified = a.state; s.lastSigAt = nowMs;
-        signalAlerts.push({ symbol: c.symbol, name: c.name, ref, last, ...a, bars: s.bars.slice(), fund: s.fund, sentiment: s.sentiment });
-      } else if (!strong) {
-        s.sigNotified = "none"; // re-armam cand iese din starea puternica
-      }
-    }
+  // Instrumente extra: praguri si moneda proprii (moneda confirmata din quote cand exista).
+  EXTRA_INSTRUMENTS.forEach((e, i) => {
+    const q = extraQuotes[i];
+    const cfg = { dropStep: e.dropStep, riseStep: e.riseStep, currency: (q && q.currency) || e.currency, extra: true };
+    processInstrument({ symbol: e.symbol, name: e.name }, q, cfg, state, nowISO, nowMs, out);
   });
 
+  const { alerts, riseAlerts, trendAlerts, signalAlerts } = out;
   saveState(state);
 
   for (const a of alerts) await emitPriceAlert(a, "down");
@@ -613,9 +673,9 @@ async function checkPrices() {
       `${arrow} <b>${esc(t.symbol)}</b> — trend clar ${word} (intraday)\n` +
       `${esc(t.name)}\n` +
       `${t.movePct >= 0 ? "+" : ""}${t.movePct.toFixed(2)}% pe ultimele ~${ore}h (${t.n} puncte, R²=${t.r2.toFixed(2)})\n` +
-      `Preț: ${fmt(t.first)} → <b>${fmt(t.last)}</b> RON (referință ${fmt(t.ref)})`;
+      `Preț: ${fmt(t.first)} → <b>${fmt(t.last)}</b> ${esc(t.currency || "RON")} (referință ${fmt(t.ref)})`;
     try {
-      const png = renderLineChartPNG({ points: t.history, up, refPrice: t.ref, title: `${t.symbol} · trend intraday`, refLabel: "Referinta = inchidere ieri" });
+      const png = renderLineChartPNG({ points: t.history, up, refPrice: t.ref, unit: t.currency || "RON", title: `${t.symbol} · trend intraday`, refLabel: "Referinta = inchidere ieri" });
       await tgPhoto(png, caption);
     } catch (e) { log("chart/photo fail:", e.message); await tgSend(caption); }
     log(`TREND ${t.symbol} ${t.state} ${t.movePct.toFixed(2)}% R2=${t.r2.toFixed(2)}`);
@@ -629,7 +689,7 @@ async function checkPrices() {
       head,
       `<b>${esc(a.symbol)}</b> · ${esc(a.name)}`,
       `Scor tehnic: <b>${a.score >= 0 ? "+" : ""}${a.score}</b>/100 (${a.confirms} confirmări)`,
-      `Preț: <b>${fmt(a.last)}</b> RON` + (i.rsi != null ? ` · RSI ${i.rsi.toFixed(0)}` : ""),
+      `Preț: <b>${fmt(a.last)}</b> ${esc(a.currency || "RON")}` + (i.rsi != null ? ` · RSI ${i.rsi.toFixed(0)}` : ""),
       ...(a.fund && (a.fund.per != null || a.fund.divy != null)
         ? [`Fundamental: ${a.fund.per != null ? `P/E ${a.fund.per}` : ""}${a.fund.eps != null ? ` · EPS ${a.fund.eps}` : ""}${a.fund.divy != null ? ` · div. ${a.fund.divy}%` : ""}`]
         : []),
@@ -649,7 +709,7 @@ async function checkPrices() {
     if (em.ema50) overlays.push({ points: em.ema50, r: 148, g: 163, b: 184, label: "EMA50" }); // EMA50 gri
     try {
       const png = renderLineChartPNG({
-        points: a.bars, up: buy, refPrice: a.ref, overlays,
+        points: a.bars, up: buy, refPrice: a.ref, overlays, unit: a.currency || "RON",
         title: `${a.symbol} · ${buy ? "semnal cumparare" : "semnal vanzare"}`, refLabel: "Referinta",
       });
       await tgPhoto(png, linii.join("\n"));
@@ -682,4 +742,4 @@ if (isMain) {
   telegramLoop();
 }
 
-export { checkPrices, checkAnnouncements, checkNews, parseReports, isMarketOpen, todayStr, parseConstituents, loadState, saveState, computeTrend, taVerdict, taStance };
+export { checkPrices, checkAnnouncements, checkNews, parseReports, isMarketOpen, todayStr, parseConstituents, loadState, saveState, computeTrend, taVerdict, taStance, fetchYahooQuote, processInstrument, emitPriceAlert, EXTRA_INSTRUMENTS };

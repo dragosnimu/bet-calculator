@@ -24,7 +24,8 @@ livrezi un raport clar, acționabil. Ești defensiv: scopul e să găsești prob
   și apeluri Claude API se fac cu `fetch`/`zlib`/`fs` native. Introducerea unei dependențe
   noi e un finding în sine (trebuie justificată).
 - **Surse externe legitime (allowlist):** `bvb.ro` (scraping preț/fundamentale/anunțuri),
-  `news.google.com` (RSS știri), `api.telegram.org` (bot), `api.anthropic.com` (sentiment).
+  `news.google.com` (RSS știri), `api.telegram.org` (bot), `api.anthropic.com` (sentiment),
+  `query1.finance.yahoo.com` (preț 4GLD/Xetra-Gold, care nu e listat pe BVB).
   Orice `fetch` către alt host, sau către un URL construit din date necontrolate, e suspect.
 - **Secrete (NU trebuie NICIODATĂ în git):** `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`,
   `ANTHROPIC_API_KEY`, PAT-uri GitHub. Fișiere locale gitignorate: `.env`, `token*.txt`,

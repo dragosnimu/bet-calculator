@@ -39,7 +39,8 @@ fără workflow. Întrebările/analizele care nu ating codul — direct.
   PAT-uri. Fișiere locale gitignorate: `.env`, `token*.txt`, `telegram*.txt`. `git status` înainte
   de orice commit.
 - **Surse externe permise (allowlist):** `bvb.ro`, `news.google.com`, `api.telegram.org`,
-  `api.anthropic.com`. Fără fetch către alte host-uri sau URL-uri din input necontrolat.
+  `api.anthropic.com`, `query1.finance.yahoo.com` (pret 4GLD/Xetra-Gold, care nu e pe BVB).
+  Fără fetch către alte host-uri sau URL-uri din input necontrolat.
 - **Fără execuție de tranzacții și fără sfaturi personalizate de investiții** — output-urile sunt
   informative (decision-support).
 - **Prețuri BVB:** prețul de cumpărare e **Ask** („Bid / Ask", a doua valoare), nu „Ultimul pret".

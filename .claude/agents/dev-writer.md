@@ -18,7 +18,8 @@ codul corect și să-l repari până trece.
   (`scripts/price-alert-worker.mjs`, `ta.mjs`, `news.mjs`, `png-chart.mjs`).
 - **Zero dependențe runtime** în afară de `xlsx`. NU adăuga pachete npm noi decât dacă e
   absolut necesar și justificat explicit — preferă `fetch`/`zlib`/`fs` native.
-- Surse externe permise: `bvb.ro`, `news.google.com`, `api.telegram.org`, `api.anthropic.com`.
+- Surse externe permise: `bvb.ro`, `news.google.com`, `api.telegram.org`, `api.anthropic.com`,
+  `query1.finance.yahoo.com` (preț 4GLD/Xetra-Gold, care nu e pe BVB).
 - **Secrete NICIODATĂ în cod/git** (`TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`, `ANTHROPIC_API_KEY`,
   PAT-uri). Fără chei hardcodate. Fără execuție de tranzacții / sfaturi personalizate de investiții.
 - La orice schimbare de comportament vizibil, **bump `APP_VERSION`** în
